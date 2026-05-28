@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "main"
+      - "*.*"
+      - "!*backport*"
+    tags:
+      - "v*"
+      - "!*dev*"
+      - "!*pre*"
+      - "!*post*"
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 3"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: cargo fmt --check
+        run: cargo fmt --check
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: cargo test
+        run: cargo test
+  core:
+    needs: [rust]
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@2835f0cacddf3f8de198db9afdb5354a5cebe0ef # v2.6.3
+    with:
+      submodules: false
+      toxdeps: tox-pypi-filter
+      envs: |
+        - linux: py314
+
+  sdist_verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+      - name: Build source distribution
+        run: |
+          python -m pip install -U --user build
+          python -m build . --sdist
+      - name: Check source distribution
+        run: |
+          python -m pip install -U --user twine
+          python -m twine check dist/*
+
+  test:
+    needs: [core, sdist_verify]
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@2835f0cacddf3f8de198db9afdb5354a5cebe0ef # v2.6.3
+    with:
+      submodules: false
+      toxdeps: tox-pypi-filter
+      envs: |
+        - macos: py313
+        - windows: py312
+
+  docs:
+    needs: [core]
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@2835f0cacddf3f8de198db9afdb5354a5cebe0ef # v2.6.3
+    with:
+      default_python: "3.14"
+      submodules: false
+      pytest: false
+      toxdeps: tox-pypi-filter
+      envs: |
+        - linux: build_docs
+
+  build_dists:
+    if: |
+      github.event_name != 'pull_request' ||
+      (
+        github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'Run publish')
+      )
+    needs: [test, docs]
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/publish.yml@2835f0cacddf3f8de198db9afdb5354a5cebe0ef # v2.6.3
+    with:
+      sdist: true
+      test_extras: "tests"
+      test_command: "pytest -p no:warnings --pyargs gaussfit_rs"
+      targets: |
+        - cp3{12,13,14}-manylinux_x86_64
+        - cp3{12,13,14}-macosx_arm64
+        - cp3{12,13,14}-win_amd64
+      submodules: false
+      save_artifacts: true
+      upload_to_pypi: false
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    name: Upload to PyPI
+    runs-on: ubuntu-latest
+    needs: [build_dists]
+    permissions:
+      id-token: write
+    environment:
+      name: pypi
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          merge-multiple: true
+          pattern: dist-*
+          path: dist
+      - name: List artifacts
+        run: ls -lha dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0

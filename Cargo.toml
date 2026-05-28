@@ -1,0 +1,24 @@
+[package]
+name = "gaussfit-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust backend for MUSE fast Gaussian fitting"
+license = "MIT"
+repository = "https://github.com/LM-SAL/gaussfit-rs"
+readme = "README.md"
+
+[lib]
+name = "gaussfit_rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+num-traits = "0.2"
+numpy = "0.28"
+pyo3 = { version = "0.28", features = ["extension-module"] }
+rayon = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

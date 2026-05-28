@@ -1,0 +1,12 @@
+target
+__pycache__
+*.py[cod]
+*.so
+*.pyd
+*.egg-info
+.venv/
+.history
+.pytest_cache
+.claude
+docs/_build
+.ruff_cache

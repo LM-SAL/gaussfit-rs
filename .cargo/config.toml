@@ -1,0 +1,17 @@
+# Optimise for the current CPU on local builds.
+# Clear RUSTFLAGS or remove this section when building distributable wheels.
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
+# See https://pyo3.rs/latest/building-and-distribution.html#macos
+[target.x86_64-apple-darwin]
+rustflags = [
+  "-C", "link-arg=-undefined",
+  "-C", "link-arg=dynamic_lookup",
+]
+
+[target.aarch64-apple-darwin]
+rustflags = [
+  "-C", "link-arg=-undefined",
+  "-C", "link-arg=dynamic_lookup",
+]

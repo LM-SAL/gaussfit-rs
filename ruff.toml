@@ -1,0 +1,27 @@
+line-length = 100
+
+[lint]
+select = ["ALL"]
+ignore = [
+    "COM812",  # conflicts with ruff-format trailing-comma insertion
+    "D200",    # defer to docformatter for closing-quote placement
+    "D413",    # defer to docformatter for blank-line-after-last-section
+    "D203",    # incompatible with D211 (no-blank-line-before-class)
+    "D212",    # incompatible with D213; docformatter uses pre-summary-newline (D213 style)
+    "D417",    # missing arg descriptions — some params documented via cross-ref
+    "INP001",  # implicit namespace package — examples/ is not a package
+    "PLR0913", # too-many-arguments — physics APIs unavoidably have many params
+    "RUF002",  # σ, χ etc. are intentional scientific symbols, not lookalike chars
+    "RUF003",  # same for comments
+]
+
+[lint.per-file-ignores]
+"examples/*" = ["T201", "PLR2004"]  # print() and numeric tolerances are intentional
+"*/tests/*"    = ["ANN", "D1", "PLR", "S101"]  # annotations, docstrings, magic numbers, assert — not required in tests
+
+[lint.isort]
+known-first-party = ["gaussfit_rs"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

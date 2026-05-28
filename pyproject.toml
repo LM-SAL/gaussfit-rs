@@ -1,0 +1,67 @@
+[build-system]
+requires = [
+  "maturin>=1.0,<2.0",
+]
+build-backend = "maturin"
+
+[project]
+name = "gaussfit-rs"
+version = "0.1.0"
+description = "Rust backend for MUSE fast Gaussian fitting"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+  { name = "Nabil Freij", email = "nabil.freij@gmail.com" },
+]
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=2.0.0",
+]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Astronomy",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.optional-dependencies]
+docs = [
+  "sphinx>=8",
+  "furo",
+  "sphinx-copybutton",
+  "numpydoc",
+]
+tests = [
+  "pytest",
+]
+dev = [
+  "gaussfit-rs[tests,docs]",
+]
+
+[project.urls]
+Source = "https://github.com/LM-SAL/gaussfit-rs"
+Issues = "https://github.com/LM-SAL/gaussfit-rs/issues"
+Documentation = "https://gaussfit-rs.readthedocs.io"
+
+[tool.maturin]
+python-source = "python"
+module-name = "gaussfit_rs._gaussfit_rs"
+
+[tool.pytest.ini_options]
+testpaths = ["python/gaussfit_rs/tests"]
+
+[tool.cibuildwheel]
+build-frontend = "build"
+skip = ["pp*", "*-win32", "*-manylinux_i686"]
+test-extras = ["tests"]
+test-command = "pytest --pyargs gaussfit_rs"
+
+[tool.docformatter]
+recursive = true
+wrap-summaries = 100
+wrap-descriptions = 100
+pre-summary-newline = true
+close-quotes-on-newline = true
+make-summary-multi-line = true
+black = true
