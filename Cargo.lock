@@ -47,6 +47,7 @@ dependencies = [
  "numpy",
  "pyo3",
  "rayon",
+ "rmpfit",
 ]
 
 [[package]]
@@ -251,6 +252,10 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
 ]
+
+[[package]]
+name = "rmpfit"
+version = "1.0.1"
 
 [[package]]
 name = "rustc-hash"

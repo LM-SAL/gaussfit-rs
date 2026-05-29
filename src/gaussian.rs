@@ -1,6 +1,6 @@
 use num_traits::Float;
+use rmpfit::{MPConfig, MPFitter, MPPar, MPResult, MPSuccess};
 
-use crate::linalg::{invert_3x3, solve_3x3};
 use crate::{FTOL, GTOL, MAX_ITER, XTOL};
 
 /// Convergence tolerances and iteration limit for the LM solver.
@@ -49,12 +49,55 @@ pub struct FitOutcome<F: Float = f32> {
     pub(crate) bestnorm: F,
 }
 
-/// Levenberg-Marquardt solver for a bounded 3-parameter Gaussian.
+/// Weighted-residual problem handed to the MPFIT (rmpfit) solver.
 ///
-/// `bounds[i] = [lower, upper]` for parameter `i` (amp, mean, sigma).
-/// Returns `None` if the solver did not reach a convergence criterion.
-/// Error estimates are derived from the diagonal of the inverse Hessian
-/// scaled by `sqrt(chi2 / dof)`.
+/// Residuals are `(y - amp * exp(-0.5 * ((x - mean) / sigma)^2)) / error`,
+/// matching the MPFIT convention `(y - f(x)) / y_err`. All arithmetic is done
+/// in `f64`; callers using `f32` convert in and out.
+struct GaussianProblem {
+    x: Vec<f64>,
+    y: Vec<f64>,
+    error: Vec<f64>,
+    params: [MPPar; 3],
+    config: MPConfig,
+}
+
+impl MPFitter for GaussianProblem {
+    fn eval(&mut self, params: &[f64], deviates: &mut [f64]) -> MPResult<()> {
+        let amp = params[0];
+        let mean = params[1];
+        let sigma = params[2];
+        for (i, deviate) in deviates.iter_mut().enumerate() {
+            let z = (self.x[i] - mean) / sigma;
+            let model = amp * (-0.5 * z * z).exp();
+            *deviate = (self.y[i] - model) / self.error[i];
+        }
+        Ok(())
+    }
+
+    fn number_of_points(&self) -> usize {
+        self.x.len()
+    }
+
+    fn config(&self) -> &MPConfig {
+        &self.config
+    }
+
+    fn parameters(&self) -> &[MPPar] {
+        &self.params
+    }
+}
+
+/// Box-constrained Levenberg-Marquardt fit of a 3-parameter Gaussian.
+///
+/// `bounds[i] = [lower, upper]` for parameter `i` (amp, mean, sigma). Returns
+/// `None` if the solver did not reach a convergence criterion (e.g. it hit the
+/// iteration limit) or the inputs are invalid.
+///
+/// The fit is delegated to [`rmpfit`], a pure-Rust port of the CMPFIT/MINPACK
+/// `mpfit` routine, so the convergence and bound-handling semantics match the
+/// original C extension. Parameter errors are the 1-sigma uncertainties from
+/// the covariance diagonal, scaled by `sqrt(chi2 / dof)`.
 pub fn fit_gaussian_bounded_with_config<F: Float>(
     x: &[F],
     y: &[F],
@@ -86,221 +129,107 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
         }
     }
 
-    let mut params = [
-        clamp(initial[0], bounds[0][0], bounds[0][1]),
-        clamp(initial[1], bounds[1][0], bounds[1][1]),
-        clamp(initial[2], bounds[2][0], bounds[2][1]),
-    ];
-
-    let mut lambda = F::from(1.0e-3_f64).unwrap();
-    let scale_down = F::from(0.1_f64).unwrap();
-    let scale_up = F::from(10.0_f64).unwrap();
-    let lambda_min = F::from(1.0e-12_f64).unwrap();
-    let one = F::one();
-    let mut converged = false;
-    let mut accepted_any_step = false;
-
-    for _ in 0..config.max_iter {
-        let (cost, gradient, hessian) = gaussian_normal_equations(x, y, error, params)?;
-
-        // Absolute "fit is good enough" floor: when the chi-squared cost itself
-        // drops to/below `ftol` the model already matches the data within
-        // tolerance. This also guards near-perfect fits where f32 rounding stops
-        // the line search from finding a strictly-smaller trial cost, which would
-        // otherwise be misreported as non-convergence.
-        if cost <= config.ftol {
-            converged = true;
-            break;
-        }
-        if max_abs(&gradient) <= config.gtol {
-            converged = true;
-            break;
-        }
-
-        let mut accepted = false;
-        let mut step_converged = false;
-        for _ in 0..24 {
-            let mut damped = hessian;
-            for i in 0..3 {
-                damped[i][i] = damped[i][i] + lambda * Float::max(hessian[i][i].abs(), one);
-            }
-
-            let rhs = [-gradient[0], -gradient[1], -gradient[2]];
-            let Some(step) = solve_3x3(damped, rhs) else {
-                lambda = lambda * scale_up;
-                continue;
-            };
-
-            let trial = [
-                clamp(params[0] + step[0], bounds[0][0], bounds[0][1]),
-                clamp(params[1] + step[1], bounds[1][0], bounds[1][1]),
-                clamp(params[2] + step[2], bounds[2][0], bounds[2][1]),
-            ];
-
-            let trial_cost = gaussian_cost(x, y, error, trial)?;
-            if trial_cost.is_finite() && trial_cost < cost {
-                let step_norm = norm3([
-                    trial[0] - params[0],
-                    trial[1] - params[1],
-                    trial[2] - params[2],
-                ]);
-                let param_norm = norm3(params);
-                let cost_delta = (cost - trial_cost).abs();
-
-                params = trial;
-                lambda = Float::max(lambda * scale_down, lambda_min);
-                accepted = true;
-                accepted_any_step = true;
-
-                step_converged = cost_delta <= config.ftol * (cost.abs() + config.ftol)
-                    || step_norm <= config.xtol * (param_norm + config.xtol);
-                break;
-            }
-
-            lambda = lambda * scale_up;
-        }
-
-        if !accepted {
-            // MPFIT reports convergence when it reaches a local minimum and no
-            // further damped step improves the cost. Preserve explicit failure
-            // for fits that never accepted a step.
-            if accepted_any_step {
-                converged = true;
-            }
-            break;
-        }
-        if step_converged {
-            converged = true;
-            break;
-        }
+    // Convert to f64 (rmpfit operates in double precision) and validate the
+    // sample data the way the old solver did via its per-point checks.
+    let xf: Vec<f64> = x.iter().map(to_f64).collect();
+    let yf: Vec<f64> = y.iter().map(to_f64).collect();
+    let ef: Vec<f64> = error.iter().map(to_f64).collect();
+    if xf.iter().any(|v| !v.is_finite()) || yf.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    if ef.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+        return None;
     }
 
+    let limits = [
+        [to_f64(&bounds[0][0]), to_f64(&bounds[0][1])],
+        [to_f64(&bounds[1][0]), to_f64(&bounds[1][1])],
+        [to_f64(&bounds[2][0]), to_f64(&bounds[2][1])],
+    ];
+    // Clamp the start point into the box; rmpfit rejects out-of-bounds starts
+    // with MPError::InitBounds.
+    let mut params = [
+        clamp_f64(to_f64(&initial[0]), limits[0]),
+        clamp_f64(to_f64(&initial[1]), limits[1]),
+        clamp_f64(to_f64(&initial[2]), limits[2]),
+    ];
+
+    let mp_par = |limit: [f64; 2]| MPPar {
+        limited_low: true,
+        limited_up: true,
+        limit_low: limit[0],
+        limit_up: limit[1],
+        ..MPPar::new()
+    };
+    let mp_config = MPConfig {
+        ftol: to_f64(&config.ftol),
+        xtol: to_f64(&config.xtol),
+        gtol: to_f64(&config.gtol),
+        max_iter: config.max_iter,
+        ..MPConfig::new()
+    };
+
+    let mut problem = GaussianProblem {
+        x: xf,
+        y: yf,
+        error: ef,
+        params: [mp_par(limits[0]), mp_par(limits[1]), mp_par(limits[2])],
+        config: mp_config,
+    };
+
+    let status = problem.mpfit(&mut params).ok()?;
+
+    // Chi/Par/Both/Dir are normal convergence; Ftol/Xtol/Gtol mean the solver
+    // reached a rounding-limited minimum it cannot improve (still a usable fit).
+    // MaxIter (and NotDone) are treated as non-convergence, matching the old
+    // "ran out of iterations" -> FLAG_NO_CONVERGENCE behaviour.
+    let converged = matches!(
+        status.success,
+        MPSuccess::Chi
+            | MPSuccess::Par
+            | MPSuccess::Both
+            | MPSuccess::Dir
+            | MPSuccess::Ftol
+            | MPSuccess::Xtol
+            | MPSuccess::Gtol
+    );
     if !converged {
         return None;
     }
 
-    let (bestnorm, _, hessian) = gaussian_normal_equations(x, y, error, params)?;
-    let dof = F::from((x.len() as i32 - 3).max(1)).unwrap();
+    let bestnorm = status.best_norm;
+    let dof = ((x.len() as i32 - 3).max(1)) as f64;
     let scale = (bestnorm / dof).sqrt();
-    let inverse = invert_3x3(hessian);
-    let zero = F::zero();
+
     let mut errors = [zero; 3];
-    if let Some(inverse) = inverse {
-        for i in 0..3 {
-            let variance = inverse[i][i];
-            errors[i] = if variance > zero && variance.is_finite() {
-                variance.sqrt() * scale
-            } else {
-                zero
-            };
-        }
+    for (i, slot) in errors.iter_mut().enumerate() {
+        let err = status.xerror.get(i).copied().unwrap_or(0.0) * scale;
+        *slot = if err.is_finite() {
+            F::from(err).unwrap_or(zero)
+        } else {
+            zero
+        };
     }
 
     Some(FitOutcome {
-        params,
+        params: [
+            from_f64(params[0])?,
+            from_f64(params[1])?,
+            from_f64(params[2])?,
+        ],
         errors,
-        bestnorm,
+        bestnorm: from_f64(bestnorm)?,
     })
 }
 
-/// Generic chi-squared cost for a Gaussian model (no gradient/Hessian).
-/// Used in the LM inner trial-step loop where derivatives are not needed.
-fn gaussian_cost<F: Float>(x: &[F], y: &[F], error: &[F], params: [F; 3]) -> Option<F> {
-    let zero = F::zero();
-    let neg_half = F::from(-0.5_f64).unwrap();
-    let amp = params[0];
-    let mean = params[1];
-    let sigma = params[2];
-    if sigma == zero || !sigma.is_finite() {
-        return None;
-    }
-    let mut cost = zero;
-    for i in 0..x.len() {
-        let err = error[i];
-        if err == zero || !err.is_finite() {
-            return None;
-        }
-        let z = (x[i] - mean) / sigma;
-        let model = amp * (neg_half * z * z).exp();
-        let residual = (y[i] - model) / err;
-        if !residual.is_finite() {
-            return None;
-        }
-        cost = cost + residual * residual;
-    }
-    Some(cost)
+fn to_f64<F: Float>(value: &F) -> f64 {
+    value.to_f64().unwrap_or(f64::NAN)
 }
 
-/// Generic chi-squared cost, gradient, and approximate Hessian in one pass.
-/// Returns `None` if any noise value is zero/non-finite or any residual overflows.
-#[allow(clippy::needless_range_loop)]
-fn gaussian_normal_equations<F: Float>(
-    x: &[F],
-    y: &[F],
-    error: &[F],
-    params: [F; 3],
-) -> Option<(F, [F; 3], [[F; 3]; 3])> {
-    let zero = F::zero();
-    let neg_half = F::from(-0.5_f64).unwrap();
-    let amp = params[0];
-    let mean = params[1];
-    let sigma = params[2];
-    if sigma == zero || !sigma.is_finite() {
-        return None;
-    }
-
-    let mut cost = zero;
-    let mut gradient = [zero; 3];
-    let mut hessian = [[zero; 3]; 3];
-
-    for i in 0..x.len() {
-        let err = error[i];
-        if err == zero || !err.is_finite() {
-            return None;
-        }
-
-        let z = (x[i] - mean) / sigma;
-        let expterm = (neg_half * z * z).exp();
-        let model = amp * expterm;
-        let residual = (y[i] - model) / err;
-        if !residual.is_finite() {
-            return None;
-        }
-
-        let derivs = [
-            -expterm / err,
-            -amp * z * expterm / (sigma * err),
-            -amp * z * z * expterm / (sigma * err),
-        ];
-
-        cost = cost + residual * residual;
-        for row in 0..3 {
-            gradient[row] = gradient[row] + derivs[row] * residual;
-            for col in 0..=row {
-                hessian[row][col] = hessian[row][col] + derivs[row] * derivs[col];
-            }
-        }
-    }
-
-    for row in 0..3 {
-        for col in 0..row {
-            hessian[col][row] = hessian[row][col];
-        }
-    }
-
-    Some((cost, gradient, hessian))
+fn from_f64<F: Float>(value: f64) -> Option<F> {
+    F::from(value)
 }
 
-fn clamp<F: Float>(value: F, low: F, high: F) -> F {
-    Float::min(Float::max(value, low), high)
-}
-
-fn max_abs<F: Float>(values: &[F; 3]) -> F {
-    values
-        .iter()
-        .fold(F::zero(), |acc, &v| Float::max(acc, v.abs()))
-}
-
-fn norm3<F: Float>(values: [F; 3]) -> F {
-    (values[0] * values[0] + values[1] * values[1] + values[2] * values[2]).sqrt()
+fn clamp_f64(value: f64, limit: [f64; 2]) -> f64 {
+    value.max(limit[0]).min(limit[1])
 }
