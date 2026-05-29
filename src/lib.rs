@@ -1,6 +1,5 @@
 mod api;
 mod gaussian;
-mod linalg;
 mod spectrum;
 
 #[cfg(test)]
