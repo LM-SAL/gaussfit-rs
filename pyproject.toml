@@ -6,7 +6,7 @@ build-backend = "maturin"
 
 [project]
 name = "gaussfit-rs"
-version = "0.1.0"
+version = "0.2.1"
 description = "Rust backend for MUSE fast Gaussian fitting"
 readme = "README.md"
 license = { text = "MIT" }

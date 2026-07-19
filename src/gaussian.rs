@@ -125,8 +125,9 @@ impl<F: Float> MPFitter for GaussianProblem<'_, F> {
 ///
 /// The fit is delegated to [`rmpfit`], a pure-Rust port of the CMPFIT/MINPACK
 /// `mpfit` routine, so the convergence and bound-handling semantics match the
-/// original C extension. Parameter errors are the 1-sigma uncertainties from
-/// the covariance diagonal, scaled by `sqrt(chi2 / dof)`.
+/// original C extension. Parameter errors use the full three-parameter
+/// Hessian, including parameters at their bounds, matching its SciPy-style
+/// covariance calculation.
 pub fn fit_gaussian_bounded_with_config<F: Float>(
     x: &[F],
     y: &[F],
@@ -228,18 +229,7 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
     }
 
     let bestnorm = status.best_norm;
-    let dof = ((x.len() as i32 - 3).max(1)) as f64;
-    let scale = (bestnorm / dof).sqrt();
-
-    let mut errors = [zero; 3];
-    for (i, slot) in errors.iter_mut().enumerate() {
-        let err = status.xerror.get(i).copied().unwrap_or(0.0) * scale;
-        *slot = if err.is_finite() {
-            F::from(err).unwrap_or(zero)
-        } else {
-            zero
-        };
-    }
+    let errors = scipy_style_errors(x, error, params, bestnorm);
 
     Some(FitOutcome {
         params: [
@@ -249,6 +239,59 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
         ],
         errors,
         bestnorm: from_f64(bestnorm)?,
+    })
+}
+
+/// Return SciPy-style errors from the inverse full Hessian, including any
+/// parameters pegged at their bounds. This mirrors `mp_xerror_scipy` in the C
+/// backend rather than rmpfit's reduced covariance for free parameters only.
+fn scipy_style_errors<F: Float>(x: &[F], error: &[F], params: [f64; 3], bestnorm: f64) -> [F; 3] {
+    let [amplitude, mean, sigma] = params;
+    let mut hessian = [[0.0f64; 3]; 3];
+
+    for (x_value, error_value) in x.iter().zip(error) {
+        let inverse_error = 1.0 / to_f64(error_value);
+        let z = (to_f64(x_value) - mean) / sigma;
+        let expterm = (-0.5 * z * z).exp();
+        let derivatives = [
+            -expterm * inverse_error,
+            -amplitude * z * expterm * inverse_error / sigma,
+            -amplitude * z * z * expterm * inverse_error / sigma,
+        ];
+        for row in 0..3 {
+            for column in row..3 {
+                hessian[row][column] += derivatives[row] * derivatives[column];
+            }
+        }
+    }
+
+    let a = hessian[0][0];
+    let b = hessian[0][1];
+    let c = hessian[0][2];
+    let d = hessian[1][1];
+    let e = hessian[1][2];
+    let f = hessian[2][2];
+    let cofactors = [d * f - e * e, a * f - c * c, a * d - b * b];
+    let cofactor_01 = -(b * f - e * c);
+    let cofactor_02 = b * e - d * c;
+    let determinant = a * cofactors[0] + b * cofactor_01 + c * cofactor_02;
+    if !determinant.is_finite() || determinant.abs() < 1.0e-30 {
+        return [F::zero(); 3];
+    }
+
+    let scale = if x.len() > 3 {
+        (bestnorm / (x.len() - 3) as f64).sqrt()
+    } else {
+        1.0
+    };
+    std::array::from_fn(|index| {
+        let variance = cofactors[index] / determinant;
+        let error = if variance > 0.0 {
+            variance.sqrt() * scale
+        } else {
+            0.0
+        };
+        F::from(error).unwrap_or_else(F::zero)
     })
 }
 
@@ -300,6 +343,35 @@ mod derivative_tests {
                 let analytical = derivatives[parameter].as_ref().unwrap()[sample];
                 assert!((analytical - numerical).abs() < 1.0e-8);
             }
+        }
+    }
+
+    #[test]
+    fn full_hessian_errors_include_parameter_at_bound() {
+        let x = [-81.215_41, -40.607_704, 0.0, 40.607_704, 81.215_41];
+        let y = [
+            0.899_082_66,
+            0.949_152_9,
+            0.999_999_8,
+            0.988_445_2,
+            0.952_372_6,
+        ];
+        let error = [1.0; 5];
+        let outcome = fit_gaussian_bounded_with_config(
+            &x,
+            &y,
+            &error,
+            [1.0, 0.0, 69.137_89],
+            [[0.9, 1.1], [-81.215_41, 81.215_41], [59.137_894, 200.0]],
+            FitConfig::<f32>::default(),
+        )
+        .unwrap();
+
+        // Reference values from MUSE's float32 C extension. In particular,
+        // sigma is at its upper bound but must retain a non-zero uncertainty.
+        let expected = [0.008_243_047, 4.667_220_6, 16.366_814];
+        for (actual, expected) in outcome.errors.into_iter().zip(expected) {
+            assert!((actual - expected).abs() <= expected * 2.0e-3);
         }
     }
 }
