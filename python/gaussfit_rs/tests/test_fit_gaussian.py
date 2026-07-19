@@ -129,6 +129,32 @@ def test_f32_raises_on_invalid_bounds():
         )
 
 
+def test_f32_raises_on_non_positive_sigma_lower_bound():
+    x, y, err = _make_data()
+    with pytest.raises(ValueError, match="sigma lower bound"):
+        fit_gaussian_f32(
+            x=x,
+            y=y,
+            error=err,
+            initial=np.array([0.9, 0, 0.9], dtype=np.float32),
+            lower_bounds=np.array([0.1, -2, 0.0], dtype=np.float32),
+            upper_bounds=np.array([2, 2, 3], dtype=np.float32),
+        )
+
+
+def test_f32_raises_on_wrong_param_length():
+    x, y, err = _make_data()
+    with pytest.raises(ValueError, match="exactly 3"):
+        fit_gaussian_f32(
+            x=x,
+            y=y,
+            error=err,
+            initial=np.array([0.9, 0, 0.9, 1.0], dtype=np.float32),
+            lower_bounds=np.array([0.1, -2, 0.2], dtype=np.float32),
+            upper_bounds=np.array([2, 2, 3], dtype=np.float32),
+        )
+
+
 def test_f32_raises_on_non_positive_error():
     x, y, err = _make_data()
     err[0] = 0.0

@@ -8,18 +8,15 @@ pub struct FitSingleSpectrumResult {
     pub(crate) fit_results: [f32; 8],
     pub(crate) i_left: i32,
     pub(crate) i_right: i32,
-    /// Negative on internal error; zero on success or expected failure.
-    pub(crate) status: i32,
 }
 
-fn result_with_flag(flag: f32, i_left: i32, i_right: i32, status: i32) -> FitSingleSpectrumResult {
+fn result_with_flag(flag: f32, i_left: i32, i_right: i32) -> FitSingleSpectrumResult {
     let mut fit_results = [f32::NAN; 8];
     fit_results[7] = flag;
     FitSingleSpectrumResult {
         fit_results,
         i_left,
         i_right,
-        status,
     }
 }
 
@@ -66,19 +63,23 @@ pub fn fit_single_spectrum_core(
     // empty-window case (where `max_val` stays -inf) and non-positive peaks
     // that would otherwise invert the sign under normalisation by `max_val`.
     if max_val <= 0.0 {
-        return result_with_flag(FLAG_NO_LOCAL_MAX, 0, 0, 0);
+        return result_with_flag(FLAG_NO_LOCAL_MAX, 0, 0);
     }
 
     // Match the original C extension: the slack-widened window is only used to
     // vet local maxima. A peak found in the slack band is rejected.
     if (dopp_slit[imax] - guide_velocity).abs() > velocity_range {
-        return result_with_flag(FLAG_NO_LOCAL_MAX, 0, 0, 0);
+        return result_with_flag(FLAG_NO_LOCAL_MAX, 0, 0);
     }
 
     let npix = npix.max(0) as usize;
     let mut i_left = imax.saturating_sub(npix);
     let mut i_right = (imax + npix + 1).min(sg_xpixels);
 
+    // Inherited from the original C extension: when the window is clamped at a
+    // spectrum edge, only one extra pixel per side is recovered, so a peak
+    // near the edge fits with fewer than `2 * npix + 1` samples. Kept so the
+    // window selection stays compatible with the C code near edges.
     if i_right - i_left < (2 * npix + 1) {
         i_left = imax.saturating_sub(npix + 1);
         i_right = (imax + npix + 2).min(sg_xpixels);
@@ -180,8 +181,10 @@ fn fit_prepared_spectrum_window(
     width_guess: f32,
     config: FitConfig,
 ) -> FitSingleSpectrumResult {
+    // A peak was found, but masking left too few valid samples to constrain a
+    // 3-parameter fit, so this is a fit failure rather than a missing peak.
     if xdata.len() < 3 {
-        return result_with_flag(FLAG_NO_LOCAL_MAX, i_left as i32, i_right as i32, 0);
+        return result_with_flag(FLAG_NO_CONVERGENCE, i_left as i32, i_right as i32);
     }
 
     let p0 = [1.0, vel_center, width_guess];
@@ -193,7 +196,7 @@ fn fit_prepared_spectrum_window(
 
     let Some(outcome) = fit_gaussian_bounded_with_config(xdata, ydata, edata, p0, bounds, config)
     else {
-        return result_with_flag(FLAG_NO_CONVERGENCE, i_left as i32, i_right as i32, 0);
+        return result_with_flag(FLAG_NO_CONVERGENCE, i_left as i32, i_right as i32);
     };
 
     let dof = (xdata.len() as i32 - 3).max(1) as f32;
@@ -211,6 +214,5 @@ fn fit_prepared_spectrum_window(
         fit_results,
         i_left: i_left as i32,
         i_right: i_right as i32,
-        status: 0,
     }
 }

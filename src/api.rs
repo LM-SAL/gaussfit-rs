@@ -100,6 +100,11 @@ fn validate_bounds<F: Float>(bounds: [[F; 2]; 3]) -> PyResult<()> {
             ));
         }
     }
+    // The solver may evaluate the model anywhere inside the box, and the
+    // Gaussian divides by sigma, so sigma = 0 must be unreachable.
+    if bounds[2][0] <= F::zero() {
+        return Err(PyValueError::new_err("sigma lower bound must be positive"));
+    }
     Ok(())
 }
 
@@ -204,12 +209,6 @@ pub(crate) fn fit_single_spectrum<'py>(
         config,
     );
 
-    if result.status < 0 {
-        return Err(PyRuntimeError::new_err(
-            "Rust fastfit backend reported an internal error",
-        ));
-    }
-
     Ok((
         result.fit_results.to_vec().into_pyarray(py),
         (result.i_left, result.i_right),
@@ -262,9 +261,9 @@ pub(crate) fn fit_gaussian_f32<'py>(
     if x.len() < 3 {
         return Err(PyValueError::new_err("at least 3 samples are required"));
     }
-    if initial.len() < 3 || lower_bounds.len() < 3 || upper_bounds.len() < 3 {
+    if initial.len() != 3 || lower_bounds.len() != 3 || upper_bounds.len() != 3 {
         return Err(PyValueError::new_err(
-            "initial, lower_bounds, and upper_bounds must have at least 3 elements",
+            "initial, lower_bounds, and upper_bounds must have exactly 3 elements",
         ));
     }
 
@@ -349,9 +348,9 @@ pub(crate) fn fit_gaussian_f64<'py>(
     if x.len() < 3 {
         return Err(PyValueError::new_err("at least 3 samples are required"));
     }
-    if initial.len() < 3 || lower_bounds.len() < 3 || upper_bounds.len() < 3 {
+    if initial.len() != 3 || lower_bounds.len() != 3 || upper_bounds.len() != 3 {
         return Err(PyValueError::new_err(
-            "initial, lower_bounds, and upper_bounds must have at least 3 elements",
+            "initial, lower_bounds, and upper_bounds must have exactly 3 elements",
         ));
     }
 

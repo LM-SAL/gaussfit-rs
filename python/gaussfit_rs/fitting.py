@@ -264,6 +264,8 @@ def fit_spectra_batch(
 
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
+    if spectra.ndim != 2:
+        raise ValueError("spectra must be a 2-D (N, M) array")
     n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
     return _fit_spectra_batch(
         spectra,
@@ -315,6 +317,8 @@ def fit_spectra_batch_guided(
     the expected line-centre velocity for each spectrum.
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
+    if spectra.ndim != 2:
+        raise ValueError("spectra must be a 2-D (N, M) array")
     n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
     return _fit_spectra_batch_guided(
         spectra,
@@ -366,7 +370,7 @@ def fit_gaussian_f32(
         Observed values, shape ``(N,)``, float32.
     error:
         1-sigma uncertainties on *y*, shape ``(N,)``, float32.  All values
-        must be finite and non-zero.
+        must be finite and positive.
     initial:
         Starting guess ``[amplitude, mean, sigma]``, shape ``(3,)``.
     lower_bounds:

@@ -1,5 +1,5 @@
 use num_traits::Float;
-use rmpfit::{MPConfig, MPFitter, MPPar, MPResult, MPSuccess};
+use rmpfit::{MPConfig, MPFitter, MPPar, MPResult, MPSide, MPSuccess};
 
 use crate::{FTOL, GTOL, MAX_ITER, XTOL};
 
@@ -27,12 +27,14 @@ impl Default for FitConfig<f32> {
     }
 }
 
+// Tighter than the f32 default to exploit the extra precision; matches the
+// defaults of the Python `fit_gaussian_f64` wrapper.
 impl Default for FitConfig<f64> {
     fn default() -> Self {
         Self {
-            xtol: XTOL as f64,
-            ftol: FTOL as f64,
-            gtol: GTOL as f64,
+            xtol: 1.0e-10,
+            ftol: 1.0e-10,
+            gtol: 1.0e-10,
             max_iter: MAX_ITER,
         }
     }
@@ -54,23 +56,23 @@ pub struct FitOutcome<F: Float = f32> {
 /// Residuals are `(y - amp * exp(-0.5 * ((x - mean) / sigma)^2)) / error`,
 /// matching the MPFIT convention `(y - f(x)) / y_err`. All arithmetic is done
 /// in `f64`; callers using `f32` convert in and out.
-struct GaussianProblem {
-    x: Vec<f64>,
-    y: Vec<f64>,
-    error: Vec<f64>,
+struct GaussianProblem<'a, F: Float> {
+    x: &'a [F],
+    y: &'a [F],
+    error: &'a [F],
     params: [MPPar; 3],
     config: MPConfig,
 }
 
-impl MPFitter for GaussianProblem {
+impl<F: Float> MPFitter for GaussianProblem<'_, F> {
     fn eval(&mut self, params: &[f64], deviates: &mut [f64]) -> MPResult<()> {
         let amp = params[0];
         let mean = params[1];
         let sigma = params[2];
         for (i, deviate) in deviates.iter_mut().enumerate() {
-            let z = (self.x[i] - mean) / sigma;
+            let z = (to_f64(&self.x[i]) - mean) / sigma;
             let model = amp * (-0.5 * z * z).exp();
-            *deviate = (self.y[i] - model) / self.error[i];
+            *deviate = (to_f64(&self.y[i]) - model) / to_f64(&self.error[i]);
         }
         Ok(())
     }
@@ -85,6 +87,33 @@ impl MPFitter for GaussianProblem {
 
     fn parameters(&self) -> &[MPPar] {
         &self.params
+    }
+
+    fn jacobian(
+        &mut self,
+        params: &[f64],
+        deviates: &mut [f64],
+        derivs: &mut [Option<Vec<f64>>],
+    ) -> MPResult<()> {
+        let amp = params[0];
+        let mean = params[1];
+        let sigma = params[2];
+        for (i, deviate) in deviates.iter_mut().enumerate() {
+            let inverse_error = 1.0 / to_f64(&self.error[i]);
+            let z = (to_f64(&self.x[i]) - mean) / sigma;
+            let expterm = (-0.5 * z * z).exp();
+            *deviate = (to_f64(&self.y[i]) - amp * expterm) * inverse_error;
+            if let Some(column) = derivs[0].as_mut() {
+                column[i] = -expterm * inverse_error;
+            }
+            if let Some(column) = derivs[1].as_mut() {
+                column[i] = -amp * z * expterm * inverse_error / sigma;
+            }
+            if let Some(column) = derivs[2].as_mut() {
+                column[i] = -amp * z * z * expterm * inverse_error / sigma;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -128,16 +157,16 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
             return None;
         }
     }
-
-    // Convert to f64 (rmpfit operates in double precision) and validate the
-    // sample data the way the old solver did via its per-point checks.
-    let xf: Vec<f64> = x.iter().map(to_f64).collect();
-    let yf: Vec<f64> = y.iter().map(to_f64).collect();
-    let ef: Vec<f64> = error.iter().map(to_f64).collect();
-    if xf.iter().any(|v| !v.is_finite()) || yf.iter().any(|v| !v.is_finite()) {
+    // The solver may evaluate the model anywhere inside the box, and `eval`
+    // divides by sigma, so sigma = 0 must be unreachable.
+    if bounds[2][0] <= zero {
         return None;
     }
-    if ef.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+
+    if x.iter().any(|v| !v.is_finite()) || y.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    if error.iter().any(|v| !v.is_finite() || *v <= zero) {
         return None;
     }
 
@@ -159,6 +188,7 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
         limited_up: true,
         limit_low: limit[0],
         limit_up: limit[1],
+        side: MPSide::User,
         ..MPPar::new()
     };
     let mp_config = MPConfig {
@@ -170,9 +200,9 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
     };
 
     let mut problem = GaussianProblem {
-        x: xf,
-        y: yf,
-        error: ef,
+        x,
+        y,
+        error,
         params: [mp_par(limits[0]), mp_par(limits[1]), mp_par(limits[2])],
         config: mp_config,
     };
@@ -232,4 +262,44 @@ fn from_f64<F: Float>(value: f64) -> Option<F> {
 
 fn clamp_f64(value: f64, limit: [f64; 2]) -> f64 {
     value.max(limit[0]).min(limit[1])
+}
+
+#[cfg(test)]
+mod derivative_tests {
+    use super::*;
+
+    #[test]
+    fn analytical_jacobian_matches_central_differences() {
+        let mut problem = GaussianProblem {
+            x: &[-1.0, 0.5, 2.0],
+            y: &[0.2, 1.1, 0.4],
+            error: &[0.1, 0.2, 0.3],
+            params: std::array::from_fn(|_| MPPar::new()),
+            config: MPConfig::new(),
+        };
+        let params = [1.2, 0.3, 0.8];
+        let mut residuals = [0.0; 3];
+        let mut derivatives = vec![Some(vec![0.0; 3]); 3];
+        problem
+            .jacobian(&params, &mut residuals, &mut derivatives)
+            .unwrap();
+
+        let step = 1.0e-6;
+        for parameter in 0..3 {
+            let mut left = params;
+            let mut right = params;
+            left[parameter] -= step;
+            right[parameter] += step;
+            let mut left_residuals = [0.0; 3];
+            let mut right_residuals = [0.0; 3];
+            problem.eval(&left, &mut left_residuals).unwrap();
+            problem.eval(&right, &mut right_residuals).unwrap();
+
+            for sample in 0..3 {
+                let numerical = (right_residuals[sample] - left_residuals[sample]) / (2.0 * step);
+                let analytical = derivatives[parameter].as_ref().unwrap()[sample];
+                assert!((analytical - numerical).abs() < 1.0e-8);
+            }
+        }
+    }
 }

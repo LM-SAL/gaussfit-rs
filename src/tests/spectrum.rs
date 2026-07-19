@@ -1,6 +1,6 @@
 use crate::gaussian::FitConfig;
 use crate::spectrum::{fit_single_spectrum_core, FitSingleSpectrumResult};
-use crate::{FLAG_NO_LOCAL_MAX, FLAG_SUCCESS};
+use crate::{FLAG_NO_CONVERGENCE, FLAG_NO_LOCAL_MAX, FLAG_SUCCESS};
 
 const SIGMA_TRUE: f32 = 30.0;
 
@@ -189,6 +189,19 @@ fn skips_masked_noise_pixel_instead_of_failing() {
 
     assert_eq!(result.fit_results[7], FLAG_SUCCESS);
     assert!(result.fit_results[1].abs() < 0.5);
+}
+
+#[test]
+fn sparse_window_reports_no_convergence() {
+    // A peak exists, but masking leaves fewer than 3 valid samples, so the
+    // failure is a fit failure (NO_CONVERGENCE), not a missing peak.
+    let v = velocity_grid(60, -300.0, 600.0 / 59.0);
+    let spectrum = gaussian_spectrum(&v, 1.0, 0.0, SIGMA_TRUE);
+    let noise = vec![f32::NAN; v.len()];
+
+    let result = fit_clean_spectrum_with_noise(&v, &spectrum, &noise);
+
+    assert_eq!(result.fit_results[7], FLAG_NO_CONVERGENCE);
 }
 
 #[test]
