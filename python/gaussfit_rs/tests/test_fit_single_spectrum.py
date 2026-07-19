@@ -236,6 +236,16 @@ def test_batch_n_pixels_limits_columns(batch_data):
     assert fits.shape == (batch_data["n"], 8)
 
 
+def test_batch_raises_on_1d_spectra(batch_data):
+    with pytest.raises(ValueError, match="2-D"):
+        fit_spectra_batch(
+            spectra=batch_data["spectra"][0],
+            dopp_slit=batch_data["v"],
+            spec_noise=batch_data["noise"],
+            **COMMON_KW,
+        )
+
+
 def test_batch_requires_exact_noise_shape(batch_data):
     with pytest.raises(ValueError, match="spec_noise shape"):
         fit_spectra_batch(

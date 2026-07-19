@@ -28,6 +28,30 @@ fn fits_simple_gaussian() {
 }
 
 #[test]
+fn rejects_non_positive_sigma_lower_bound() {
+    let x = [-2.0, -1.0, 0.0, 1.0, 2.0];
+    let y = [
+        (-0.5f32 * 4.0).exp(),
+        (-0.5f32).exp(),
+        1.0,
+        (-0.5f32).exp(),
+        (-0.5f32 * 4.0).exp(),
+    ];
+    let err = [0.1; 5];
+
+    let outcome = fit_gaussian_bounded_with_config(
+        &x,
+        &y,
+        &err,
+        [0.9, 0.1, 0.8],
+        [[0.1, 2.0], [-2.0, 2.0], [0.0, 2.0]],
+        FitConfig::default(),
+    );
+
+    assert!(outcome.is_none());
+}
+
+#[test]
 fn fits_simple_gaussian_f64() {
     let x: [f64; 5] = [-2.0, -1.0, 0.0, 1.0, 2.0];
     let y: [f64; 5] = [
