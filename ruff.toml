@@ -17,6 +17,7 @@ ignore = [
 
 [lint.per-file-ignores]
 "examples/*" = ["T201", "PLR2004"]  # print() and numeric tolerances are intentional
+"benchmarks/*" = ["T201", "D103", "ANN202", "TRY003", "EM101"]  # script output/messages, not library API
 "*/tests/*"    = ["ANN", "D1", "PLR", "S101"]  # annotations, docstrings, magic numbers, assert — not required in tests
 
 [lint.isort]
