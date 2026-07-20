@@ -209,6 +209,15 @@ def fit_single_spectrum(
     )
 
 
+_SPECTRA_NDIM = 2
+
+
+def _require_2d_spectra(spectra: NDArray[np.float32]) -> None:
+    if spectra.ndim != _SPECTRA_NDIM:
+        msg = "spectra must be a 2-D (N, M) array"
+        raise ValueError(msg)
+
+
 def fit_spectra_batch(
     *,
     spectra: NDArray[np.float32],
@@ -264,8 +273,7 @@ def fit_spectra_batch(
 
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
-    if spectra.ndim != 2:
-        raise ValueError("spectra must be a 2-D (N, M) array")
+    _require_2d_spectra(spectra)
     n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
     return _fit_spectra_batch(
         spectra,
@@ -317,8 +325,7 @@ def fit_spectra_batch_guided(
     the expected line-centre velocity for each spectrum.
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
-    if spectra.ndim != 2:
-        raise ValueError("spectra must be a 2-D (N, M) array")
+    _require_2d_spectra(spectra)
     n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
     return _fit_spectra_batch_guided(
         spectra,
