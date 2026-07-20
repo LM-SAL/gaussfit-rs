@@ -1,7 +1,8 @@
-"""Measure public batch-fitting throughput with deterministic noisy spectra.
+"""
+Measure public batch-fitting throughput with deterministic noisy spectra.
 
-Run once with ``RAYON_NUM_THREADS=1`` and once without it to compare
-single-thread and default multicore performance.
+Run once with ``RAYON_NUM_THREADS=1`` and once without it to compare single-thread and default
+multicore performance.
 """
 
 from __future__ import annotations
@@ -29,8 +30,7 @@ def main() -> None:
     sigmas = rng.uniform(10.0, 60.0, (args.spectra, 1)).astype(np.float32)
     spectra = np.ascontiguousarray(
         amplitudes * np.exp(-0.5 * ((velocity[None, :] - means) / sigmas) ** 2)
-        + np.float32(0.05)
-        * rng.standard_normal((args.spectra, args.pixels), dtype=np.float32)
+        + np.float32(0.05) * rng.standard_normal((args.spectra, args.pixels), dtype=np.float32)
     )
     noise = np.full_like(spectra, 0.05)
 
