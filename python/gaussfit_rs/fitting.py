@@ -26,9 +26,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 
 from ._gaussfit_rs import fit_gaussian_f32 as _fit_gaussian_f32
-from ._gaussfit_rs import fit_gaussian_f64 as _fit_gaussian_f64
 from ._gaussfit_rs import fit_single_spectrum as _fit_single_spectrum
-from ._gaussfit_rs import fit_spectra_batch as _fit_spectra_batch
 from ._gaussfit_rs import fit_spectra_batch_guided as _fit_spectra_batch_guided
 
 if TYPE_CHECKING:
@@ -40,7 +38,6 @@ __all__ = [
     "FLAG_SUCCESS",
     "FitResult",
     "fit_gaussian_f32",
-    "fit_gaussian_f64",
     "fit_single_spectrum",
     "fit_spectra_batch",
     "fit_spectra_batch_guided",
@@ -275,11 +272,11 @@ def fit_spectra_batch(
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
     _require_2d_spectra(spectra)
     n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
-    return _fit_spectra_batch(
+    return _fit_spectra_batch_guided(
         spectra,
         np.ascontiguousarray(dopp_slit, dtype=np.float32),
         np.ascontiguousarray(spec_noise, dtype=np.float32),
-        float(guide_velocity),
+        np.full(spectra.shape[0], float(guide_velocity), dtype=np.float32),
         float(velocity_range),
         int(npix),
         int(npix_slack),
@@ -407,44 +404,6 @@ def fit_gaussian_f32(
         np.ascontiguousarray(initial, dtype=np.float32),
         np.ascontiguousarray(lower_bounds, dtype=np.float32),
         np.ascontiguousarray(upper_bounds, dtype=np.float32),
-        float(xtol),
-        float(ftol),
-        float(gtol),
-        int(max_iter),
-    )
-
-
-def fit_gaussian_f64(
-    *,
-    x: NDArray[np.float64],
-    y: NDArray[np.float64],
-    error: NDArray[np.float64],
-    initial: NDArray[np.float64],
-    lower_bounds: NDArray[np.float64],
-    upper_bounds: NDArray[np.float64],
-    xtol: float = 1.0e-10,
-    ftol: float = 1.0e-10,
-    gtol: float = 1.0e-10,
-    max_iter: int = 2000,
-) -> NDArray[np.float64]:
-    """
-    Fit a bounded Gaussian to (x, y ± error) data in double precision.
-
-    Identical to :func:`fit_gaussian_f32` but operates on ``float64`` arrays
-    throughout.  Use when the data span a wide dynamic range or when f32
-    rounding would be significant.
-
-    Parameters and return value have the same structure as
-    :func:`fit_gaussian_f32`, but all arrays are ``float64``.
-    Default tolerances are tighter (1e-10) to exploit the extra precision.
-    """
-    return _fit_gaussian_f64(
-        np.ascontiguousarray(x, dtype=np.float64),
-        np.ascontiguousarray(y, dtype=np.float64),
-        np.ascontiguousarray(error, dtype=np.float64),
-        np.ascontiguousarray(initial, dtype=np.float64),
-        np.ascontiguousarray(lower_bounds, dtype=np.float64),
-        np.ascontiguousarray(upper_bounds, dtype=np.float64),
         float(xtol),
         float(ftol),
         float(gtol),
