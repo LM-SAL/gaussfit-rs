@@ -10,8 +10,6 @@ Functions
 
 .. autofunction:: gaussfit_rs.fit_gaussian_f32
 
-.. autofunction:: gaussfit_rs.fit_gaussian_f64
-
 Result type
 -----------
 

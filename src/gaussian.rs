@@ -27,8 +27,7 @@ impl Default for FitConfig<f32> {
     }
 }
 
-// Tighter than the f32 default to exploit the extra precision; matches the
-// defaults of the Python `fit_gaussian_f64` wrapper.
+// Tighter than the f32 default to exploit the extra precision.
 impl Default for FitConfig<f64> {
     fn default() -> Self {
         Self {

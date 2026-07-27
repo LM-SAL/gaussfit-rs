@@ -142,37 +142,23 @@ The f32 functions default to:
        max_iter=2000,
    )
 
-The f64 low-level function uses tighter defaults:
-
-.. code-block:: python
-
-   fit_gaussian_f64(
-       ...,
-       xtol=1e-10,
-       ftol=1e-10,
-       gtol=1e-10,
-       max_iter=2000,
-   )
-
 Tighten these for high-SNR data; relax (e.g. ``gtol=1e-4``) for bulk runs
 where exact convergence is less critical.
 
 Low-level Gaussian fitting
 --------------------------
 
-:func:`~gaussfit_rs.fit_gaussian_f32` and :func:`~gaussfit_rs.fit_gaussian_f64`
-fit a Gaussian to arbitrary (x, y ± error) data without the spectral
-peak-finding step.  Use the f64 variant when the data span a wide dynamic range
-or when f32 rounding is significant.
+:func:`~gaussfit_rs.fit_gaussian_f32` fits a Gaussian to arbitrary
+(x, y ± error) data without the spectral peak-finding step.
 
 .. code-block:: python
 
-   from gaussfit_rs import fit_gaussian_f64
+   from gaussfit_rs import fit_gaussian_f32
    import numpy as np
 
-   result = fit_gaussian_f64(
+   result = fit_gaussian_f32(
        x=x, y=y, error=err,
-       initial=np.array([1.0, 0.0, 1.0]),
-       lower_bounds=np.array([0.1, -5.0, 0.1]),
-       upper_bounds=np.array([2.0,  5.0, 5.0]),
+       initial=np.array([1.0, 0.0, 1.0], dtype=np.float32),
+       lower_bounds=np.array([0.1, -5.0, 0.1], dtype=np.float32),
+       upper_bounds=np.array([2.0, 5.0, 5.0], dtype=np.float32),
    )
