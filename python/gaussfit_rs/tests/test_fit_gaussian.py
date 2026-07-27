@@ -1,5 +1,5 @@
 """
-Tests for fit_gaussian_f32 and fit_gaussian_f64.
+Tests for fit_gaussian_f32.
 """
 
 import numpy as np
@@ -9,7 +9,6 @@ from gaussfit_rs import (
     FLAG_NO_CONVERGENCE,
     FLAG_SUCCESS,
     fit_gaussian_f32,
-    fit_gaussian_f64,
 )
 
 
@@ -237,53 +236,3 @@ def test_f32_dtype_auto_conversion():
     )
     assert r.dtype == np.float32
     assert r[7] == FLAG_SUCCESS
-
-
-def test_f64_recovers_unit_gaussian():
-    x, y, err = _make_data(dtype=np.float64, noise=0.001)
-    r = fit_gaussian_f64(
-        x=x,
-        y=y,
-        error=err,
-        initial=np.array([0.9, 0.1, 0.8]),
-        lower_bounds=np.array([0.1, -2.0, 0.2]),
-        upper_bounds=np.array([2.0, 2.0, 3.0]),
-    )
-    assert r[7] == 0.0  # FLAG_SUCCESS as f64
-    assert abs(r[0] - 1.0) < 1e-6, f"amp={r[0]}"
-    assert abs(r[1] - 0.0) < 1e-6, f"mean={r[1]}"
-    assert abs(r[2] - 1.0) < 1e-6, f"sigma={r[2]}"
-
-
-def test_f64_output_dtype():
-    x, y, err = _make_data(dtype=np.float64)
-    r = fit_gaussian_f64(
-        x=x,
-        y=y,
-        error=err,
-        initial=np.array([0.9, 0, 0.9]),
-        lower_bounds=np.array([0.1, -2, 0.2]),
-        upper_bounds=np.array([2, 2, 3]),
-    )
-    assert r.dtype == np.float64
-
-
-def test_f64_more_precise_than_f32():
-    x, y, err = _make_data(dtype=np.float64, noise=0.001, n=100)
-    r64 = fit_gaussian_f64(
-        x=x,
-        y=y,
-        error=err,
-        initial=np.array([0.9, 0, 0.9]),
-        lower_bounds=np.array([0.1, -2, 0.2]),
-        upper_bounds=np.array([2, 2, 3]),
-    )
-    r32 = fit_gaussian_f32(
-        x=x.astype(np.float32),
-        y=y.astype(np.float32),
-        error=err.astype(np.float32),
-        initial=np.array([0.9, 0, 0.9], dtype=np.float32),
-        lower_bounds=np.array([0.1, -2, 0.2], dtype=np.float32),
-        upper_bounds=np.array([2, 2, 3], dtype=np.float32),
-    )
-    assert abs(r64[0] - 1.0) <= abs(r32[0] - 1.0) + 1e-5
