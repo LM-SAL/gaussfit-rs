@@ -48,6 +48,21 @@ Documentation = "https://gaussfit-rs.readthedocs.io"
 [tool.maturin]
 python-source = "python"
 module-name = "gaussfit_rs._gaussfit_rs"
+# Keep the sdist to what a build needs. The C reference is test-only and carries its own licenses.
+exclude = [
+  "third_party/**",
+  "benchmarks/**",
+  "docs/**",
+  ".circleci/**",
+  ".github/**",
+  ".gitignore",
+  ".pre-commit-config.yaml",
+  ".readthedocs.yaml",
+  ".clippy.toml",
+  "rustfmt.toml",
+  "ruff.toml",
+  "tox.ini",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["python/gaussfit_rs/tests"]
