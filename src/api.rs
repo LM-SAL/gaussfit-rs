@@ -131,7 +131,10 @@ fn validate_fit_arrays<F: Float>(x: &[F], y: &[F], error: &[F]) -> PyResult<()> 
 /// Fit a single Gaussian to one spectrum.
 ///
 /// Returns an 8-element array `[amp, vel, sigma, amp_err, vel_err, sig_err,
-/// reduced_chi2, flag]` and the `(i_left, i_right)` pixel window used.
+/// reduced_chi2, flag]` and the `(i_left, i_right)` pixel window used. `flag`
+/// is `FLAG_SUCCESS`, `FLAG_NO_LOCAL_MAX` (no positive peak in the search
+/// window, including a non-finite guide, or fewer than 3 valid samples) or
+/// `FLAG_NO_CONVERGENCE`; all other fields are NaN unless the flag is success.
 #[pyfunction]
 #[pyo3(signature = (spectrum, dopp_slit, spec_noise, guide_velocity, velocity_range,
     npix, npix_slack, dv, width_min, sg_xpixels, amplitude_rel_min, amplitude_rel_max,
@@ -301,7 +304,8 @@ pub(crate) fn fit_gaussian_f32<'py>(
 /// Fit Gaussians to N spectra with one guide velocity per spectrum.
 ///
 /// This is equivalent to `fit_spectra_batch`, except `guide_velocities[i]` is
-/// used when fitting row `i`. A non-finite guide matches no pixel and yields
+/// used when fitting row `i`. Each result row carries the same flag set as
+/// `fit_single_spectrum`; a non-finite guide matches no pixel and yields
 /// `FLAG_NO_LOCAL_MAX`, as in the C extension.
 #[pyfunction]
 #[pyo3(signature = (spectra, dopp_slit, spec_noise, guide_velocities, velocity_range,

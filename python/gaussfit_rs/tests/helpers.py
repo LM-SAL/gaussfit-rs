@@ -41,8 +41,8 @@ def assert_fit_parity(fits, c_fits, dv, *, indices=None, c_indices=None, labels=
 
     Flags and fit windows must be identical, and failed fits must be NaN. Parameters must agree to
     ``RTOL`` (relative for amplitude and width, in pixels for velocity, plus ``CHI_ATOL`` for chi-
-    square) unless both fits are equally good (reduced chi-square within 1%) or Rust's is better:
-    the float32 C solver can stop at a different point of a flat, bound-limited chi-square valley.
+    square) unless Rust's reduced chi-square is no higher than C's within that same tolerance: the
+    float32 C solver can stop at a different point of a flat, bound-limited chi-square valley.
     Rust is never allowed to be worse. Errors are compared only for well-constrained fits (both
     solvers report every error positive and below half the parameter, or one pixel for velocity)
     where the parameters agree: a fit pinned at a bound or narrower than a pixel has a near-singular
@@ -66,8 +66,7 @@ def assert_fit_parity(fits, c_fits, dv, *, indices=None, c_indices=None, labels=
         )
         chi_close = np.abs(r[:, 6] - c[:, 6]) <= RTOL * c[:, 6] + CHI_ATOL
         close = (np.abs(r[:, :3] - c[:, :3]) <= RTOL * scale).all(axis=1) & chi_close
-        same_quality = np.abs(r[:, 6] - c[:, 6]) <= 1e-2 * c[:, 6] + CHI_ATOL
-        worse = ~close & ~same_quality & (r[:, 6] > c[:, 6])
+        worse = ~close & (r[:, 6] > c[:, 6] * (1 + RTOL) + CHI_ATOL)
         assert not worse.any(), (
             f"{label}: Rust fit worse than C, reduced chi-square {r[worse, 6]} vs {c[worse, 6]}"
         )
