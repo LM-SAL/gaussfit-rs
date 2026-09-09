@@ -1,0 +1,12 @@
+The ftoolss project declares its license as MIT in README.md (License
+section) and setup.py (license="MIT") at revision
+9a8a9defd61d6e560a7cf1f44dae21eb4b1c8e90:
+
+    https://github.com/steinhh/ftools
+
+That revision supplies no standalone MIT license text or copyright notice
+for gaussian_deviate.c. This file records the upstream declaration;
+it does not assign a new copyright holder to the copied source.
+
+The CMPFIT sources retain their separate copyright notices and license
+terms in vendor/cmpfit-1.5/DISCLAIMER.

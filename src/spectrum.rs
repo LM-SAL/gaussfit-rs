@@ -48,6 +48,8 @@ pub fn fit_single_spectrum_core(
     let mut imax = 0usize;
     let mut max_val = f32::NEG_INFINITY;
 
+    // A non-finite guide makes every comparison false, so no peak is found
+    // and FLAG_NO_LOCAL_MAX is returned, matching the C extension.
     for i in 0..sg_xpixels {
         let vel_abs = (dopp_slit[i] - guide_velocity).abs();
         if vel_abs <= velocity_range + dv_slac {
@@ -182,9 +184,9 @@ fn fit_prepared_spectrum_window(
     config: FitConfig,
 ) -> FitSingleSpectrumResult {
     // A peak was found, but masking left too few valid samples to constrain a
-    // 3-parameter fit, so this is a fit failure rather than a missing peak.
+    // 3-parameter fit. Reported as FLAG_NO_LOCAL_MAX to match the C extension.
     if xdata.len() < 3 {
-        return result_with_flag(FLAG_NO_CONVERGENCE, i_left as i32, i_right as i32);
+        return result_with_flag(FLAG_NO_LOCAL_MAX, i_left as i32, i_right as i32);
     }
 
     let p0 = [1.0, vel_center, width_guess];

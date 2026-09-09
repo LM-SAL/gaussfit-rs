@@ -52,6 +52,15 @@ jobs:
       envs: |
         - linux: py314
 
+  c_parity:
+    needs: [rust]
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@2835f0cacddf3f8de198db9afdb5354a5cebe0ef # v2.6.3
+    with:
+      submodules: false
+      toxdeps: tox-pypi-filter
+      envs: |
+        - linux: py313-cparity
+
   sdist_verify:
     runs-on: ubuntu-latest
     steps:
@@ -103,7 +112,7 @@ jobs:
         github.event_name == 'pull_request' &&
         contains(github.event.pull_request.labels.*.name, 'Run publish')
       )
-    needs: [test, docs]
+    needs: [test, docs, c_parity]
     uses: OpenAstronomy/github-actions-workflows/.github/workflows/publish.yml@2835f0cacddf3f8de198db9afdb5354a5cebe0ef # v2.6.3
     with:
       sdist: true

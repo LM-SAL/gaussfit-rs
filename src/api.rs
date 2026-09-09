@@ -43,7 +43,6 @@ fn validate_fit_config<F: Float>(
 
 #[allow(clippy::too_many_arguments)]
 fn validate_spectrum_options(
-    guide_velocity: f32,
     velocity_range: f32,
     npix: i32,
     npix_slack: i32,
@@ -55,7 +54,6 @@ fn validate_spectrum_options(
     width_guess: f32,
 ) -> PyResult<()> {
     let values = [
-        guide_velocity,
         velocity_range,
         dv,
         width_min,
@@ -133,7 +131,10 @@ fn validate_fit_arrays<F: Float>(x: &[F], y: &[F], error: &[F]) -> PyResult<()> 
 /// Fit a single Gaussian to one spectrum.
 ///
 /// Returns an 8-element array `[amp, vel, sigma, amp_err, vel_err, sig_err,
-/// reduced_chi2, flag]` and the `(i_left, i_right)` pixel window used.
+/// reduced_chi2, flag]` and the `(i_left, i_right)` pixel window used. `flag`
+/// is `FLAG_SUCCESS`, `FLAG_NO_LOCAL_MAX` (no positive peak in the search
+/// window, including a non-finite guide, or fewer than 3 valid samples) or
+/// `FLAG_NO_CONVERGENCE`; all other fields are NaN unless the flag is success.
 #[pyfunction]
 #[pyo3(signature = (spectrum, dopp_slit, spec_noise, guide_velocity, velocity_range,
     npix, npix_slack, dv, width_min, sg_xpixels, amplitude_rel_min, amplitude_rel_max,
@@ -162,7 +163,6 @@ pub(crate) fn fit_single_spectrum<'py>(
 ) -> PyResult<(Bound<'py, PyArray1<f32>>, (i32, i32))> {
     let sg_xpixels = validate_n_pixels(sg_xpixels)?;
     validate_spectrum_options(
-        guide_velocity,
         velocity_range,
         npix,
         npix_slack,
@@ -304,7 +304,9 @@ pub(crate) fn fit_gaussian_f32<'py>(
 /// Fit Gaussians to N spectra with one guide velocity per spectrum.
 ///
 /// This is equivalent to `fit_spectra_batch`, except `guide_velocities[i]` is
-/// used when fitting row `i`.
+/// used when fitting row `i`. Each result row carries the same flag set as
+/// `fit_single_spectrum`; a non-finite guide matches no pixel and yields
+/// `FLAG_NO_LOCAL_MAX`, as in the C extension.
 #[pyfunction]
 #[pyo3(signature = (spectra, dopp_slit, spec_noise, guide_velocities, velocity_range,
     npix, npix_slack, dv, width_min, sg_xpixels, amplitude_rel_min, amplitude_rel_max,
@@ -333,7 +335,6 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
 ) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<i32>>)> {
     let sg_xpixels = validate_n_pixels(sg_xpixels)?;
     validate_spectrum_options(
-        0.0,
         velocity_range,
         npix,
         npix_slack,
@@ -382,10 +383,6 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
     let guide_data = guide_velocities.as_slice().map_err(|_| {
         PyValueError::new_err("guide_velocities must be a contiguous float32 array")
     })?;
-
-    if guide_data.iter().any(|value| !value.is_finite()) {
-        return Err(PyValueError::new_err("guide_velocities must be finite"));
-    }
 
     let dopp_window = &dopp_data[..sg_xpixels];
 
