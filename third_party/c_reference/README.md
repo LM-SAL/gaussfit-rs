@@ -53,6 +53,9 @@ python -m pip install --force-reinstall ./third_party/c_reference
 python -m pytest python/gaussfit_rs/tests/test_c_parity.py
 ```
 
+tox caches the built reference, so after changing anything under `vendor/`
+recreate the environment with `tox -r -e py313-cparity`.
+
 Do not modify the C implementation to make Rust tests pass.
 
 To regenerate the recorded fixtures with the installed reference:
