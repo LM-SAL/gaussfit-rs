@@ -319,7 +319,8 @@ def fit_spectra_batch_guided(
     Fit Gaussians to N spectra in parallel with one guide velocity per row.
 
     Same as :func:`fit_spectra_batch`, except ``guide_velocities`` has shape ``(N,)`` and supplies
-    the expected line-centre velocity for each spectrum.
+    the expected line-centre velocity for each spectrum. A non-finite guide matches no pixel, so
+    that row returns :data:`FLAG_NO_LOCAL_MAX`, as in the C extension.
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
     _require_2d_spectra(spectra)

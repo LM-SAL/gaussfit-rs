@@ -1,31 +1,111 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: https://circleci.com/docs/reference/configuration-reference/
 version: 2.1
 
-# Define a job to be invoked later in a workflow.
-# See: https://circleci.com/docs/guides/orchestrate/jobs-steps/#jobs-overview & https://circleci.com/docs/reference/configuration-reference/#jobs
+no-backports: &no-backports
+  name: Skip any branches called cherry-pick
+  command: |
+    if [[ "${CIRCLE_BRANCH}" == *"cherry-pick"* || "${CIRCLE_BRANCH}" == *"backport"* ]]; then
+      circleci step halt
+    fi
+
+skip-check: &skip-check
+  name: Check for [ci skip]
+  command: bash .circleci/early_exit.sh
+
+merge-check: &merge-check
+  name: Check if we need to merge upstream main
+  command: |
+    if [[ -n "${CIRCLE_PR_NUMBER}" ]]; then
+      git fetch origin --tags
+      git fetch origin +refs/pull/$CIRCLE_PR_NUMBER/merge:pr/$CIRCLE_PR_NUMBER/merge
+      git checkout -qf pr/$CIRCLE_PR_NUMBER/merge
+    fi
+
+rust-install: &rust-install
+  name: Install the Rust toolchain (maturin builds the extension)
+  command: |
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    echo 'source "$HOME/.cargo/env"' >> "$BASH_ENV"
+
 jobs:
-  say-hello:
-    # Specify the execution environment. You can specify an image from Docker Hub or use one of our convenience images from CircleCI's Developer Hub.
-    # See: https://circleci.com/docs/guides/execution-managed/executor-intro/ & https://circleci.com/docs/reference/configuration-reference/#executor-job
+  figure:
+    parameters:
+      jobname:
+        type: string
     docker:
-      # Specify the version you desire here
-      # See: https://circleci.com/developer/images/image/cimg/base
-      - image: cimg/base:current
-
-    # Add steps to the job
-    # See: https://circleci.com/docs/guides/orchestrate/jobs-steps/#steps-overview & https://circleci.com/docs/reference/configuration-reference/#steps
+      - image: cimg/python:3.13
+    environment:
+      TOXENV=<< parameters.jobname >>
     steps:
-      # Checkout the code as the first step.
+      - run: *no-backports
       - checkout
+      - run: *skip-check
+      - run: *merge-check
+      - run: *rust-install
+      - run: pip install --user -U tox tox-pypi-filter
+      - run: tox -v
+      - store_artifacts:
+          path: .tmp/<< parameters.jobname >>/figure_test_images
       - run:
-          name: "Say hello"
-          command: "echo Hello, World!"
+          name: "Image comparison page is available at: "
+          command: echo "${CIRCLE_BUILD_URL}/artifacts/${CIRCLE_NODE_INDEX}/.tmp/${TOXENV}/figure_test_images/fig_comparison.html"
 
-# Orchestrate jobs using workflows
-# See: https://circleci.com/docs/guides/orchestrate/workflows/ & https://circleci.com/docs/reference/configuration-reference/#workflows
+  deploy-reference-images:
+    parameters:
+      jobname:
+        type: string
+    docker:
+      - image: cimg/python:3.13
+    environment:
+      TOXENV: << parameters.jobname >>
+    steps:
+      - checkout
+      - run: *skip-check
+      - run: *merge-check
+      - run: *rust-install
+      # Clear out all the ssh keys so that it always uses the write deploy key
+      - run: ssh-add -D
+      # Add private key for deploying to the figure tests repo
+      - add_ssh_keys:
+          fingerprints: "SHA256:jVnptuBNlSZXcnweypnpX7Owzt6M8+jJCTDpmtJ9a30"
+      - run: ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - run: git config --global user.email "lmsal@circleci" && git config --global user.name "Circle CI"
+      - run: git clone git@github.com:LM-SAL/figure-test-images.git --depth 1 -b gaussfit-rs-${CIRCLE_BRANCH} ~/gaussfit-rs-figure-tests/
+      # Generate Reference images
+      - run: pip install --user -U tox tox-pypi-filter
+      - run: rm -rf /home/circleci/gaussfit-rs-figure-tests/figures/$TOXENV/*
+      - run: tox -v -- --mpl-generate-path=/home/circleci/gaussfit-rs-figure-tests/figures/$TOXENV | tee toxlog
+      - run: |
+          hashlib=$(grep "^figure_hashes.*\.json$" toxlog)
+          cp ./python/gaussfit_rs/tests/$hashlib /home/circleci/gaussfit-rs-figure-tests/figures/$TOXENV/
+      - run: |
+          cd ~/gaussfit-rs-figure-tests/
+          git pull
+          git status
+          git add .
+          git commit -m "Update reference figures from ${CIRCLE_BRANCH}" || echo "No changes to reference images to deploy"
+          git push
+
 workflows:
-  say-hello-workflow: # This is the name of the workflow, feel free to change it to better match your workflow.
-    # Inside the workflow, you define the jobs you want to run.
+  version: 2
+
+  figure-tests:
     jobs:
-      - say-hello
+      - figure:
+          name: << matrix.jobname >>
+          matrix:
+            parameters:
+              jobname:
+                - "py313-figure"
+
+      - deploy-reference-images:
+          name: baseline-<< matrix.jobname >>
+          matrix:
+            parameters:
+              jobname:
+                - "py313-figure"
+          requires:
+            - << matrix.jobname >>
+          filters:
+            branches:
+              only:
+                - main

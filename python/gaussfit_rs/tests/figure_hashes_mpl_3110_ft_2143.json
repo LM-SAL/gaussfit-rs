@@ -1,0 +1,17 @@
+{
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[asymmetric]": "344d4e937c78fa01431ce72c515ea4d96949b3703357fd12d8abc712d5594edc",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[blend]": "69a03686d59322a0af68271871e2025a88171e7d2f20045c05103fce6b20ff2c",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[broad]": "b4efbdb2ba62f6ad889b85490a6fda545a7544ca20cf54c3782a9e525441be09",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[clean]": "321534f3a21bfbb1877e0a9a4a63fb1e2ad2d95edc7d222a87c8d5669b834f8a",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[continuum]": "c05fb397acfbf4451e242af54c89394a46a6d0d22ac5354b0c3bfff4d73ffb72",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[degenerate]": "7c259e235d6a6f5fc149db40c38077014937c9e733d195d0daa17e5953fccbe6",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[flat_top]": "ef78dbe16e4e4249160de3d2f9e931720466f2c536758bf23a51260cb86aa9e0",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[hot_pixel]": "95ebd124eefedc915a4ee777aabca265f1826e01cab2391d42ea05ee6a3d4c33",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[low_snr]": "d412bb26920a53d7b6281b98e157aa458fd95087c21ae3d72bd4514409ed4f57",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[masked]": "5464940bd7be7653b33ecd79ad5d4666f95d409074ae5ddab6c276b407758013",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[narrow]": "2691fd6682b921e35d4201bff1390e667ec2010ba26256d2697ec798fe9f32c9",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[poisson]": "e1cdf779f01f53ef8e5a87eebf1582ae62753d16a90f839109c756033e5e3371",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[white_noise]": "519c1dee4b0dc336bec601e169c363c05384a337de7bbb43996e0c890f38f447",
+  "gaussfit_rs.tests.test_figures.test_fit_gallery[wings]": "2eb3661cb05a114d7eea4b5ca54dd0a0e9fb44e778e49370691e5e3eacb76e99",
+  "gaussfit_rs.tests.test_figures.test_parity_summary": "60af13c7e161f4177f26767a81d1446f79c0d3346811fb5d926a2c0ad270239a"
+}
