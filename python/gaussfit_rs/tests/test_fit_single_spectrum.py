@@ -255,3 +255,26 @@ def test_batch_requires_exact_noise_shape(batch_data):
             n_pixels=50,
             **COMMON_KW,
         )
+
+
+@pytest.mark.parametrize("guide", [np.nan, np.inf, -np.inf])
+def test_nonfinite_guide_reports_no_local_max(guide):
+    # Matches the C extension: a nonfinite guide matches no pixel, so no peak is found.
+    v, spec, err = _make_spectrum()
+    r, window = fit_single_spectrum(
+        spectrum=spec, dopp_slit=v, spec_noise=err, **{**COMMON_KW, "guide_velocity": guide}
+    )
+    assert r[7] == FLAG_NO_LOCAL_MAX
+    assert np.isnan(r[:7]).all()
+    assert window == (0, 0)
+    batch_kw = {k: val for k, val in COMMON_KW.items() if k != "guide_velocity"}
+    fits, idx = fit_spectra_batch_guided(
+        spectra=np.stack([spec, spec]),
+        dopp_slit=v,
+        spec_noise=np.stack([err, err]),
+        guide_velocities=np.array([guide, 0.0], dtype=np.float32),
+        **batch_kw,
+    )
+    assert fits[0, 7] == FLAG_NO_LOCAL_MAX
+    assert fits[1, 7] == FLAG_SUCCESS
+    np.testing.assert_array_equal(idx[0], [0, 0])

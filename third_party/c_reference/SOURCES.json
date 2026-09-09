@@ -1,0 +1,38 @@
+{
+  "vendor/fit_single_spectrum_ext.c": {
+    "repository": "https://gitlab.com/LMSAL_HUB/muse_hub/muse",
+    "revision": "74df595bcf2367f2cebee41acba2646bdf22f248",
+    "path": "muse/fastfit/fit_single_spectrum_ext.c",
+    "sha256": "3e7f646b989b28a236edee43c32ea83297f6fcf8ae5f1c23fa019636b62ef403"
+  },
+  "LICENSE.muse": {
+    "repository": "https://gitlab.com/LMSAL_HUB/muse_hub/muse",
+    "revision": "74df595bcf2367f2cebee41acba2646bdf22f248",
+    "path": "LICENSE.rst",
+    "sha256": "4c33c517a4a17d883a4305413aa5967fde6402bf09e6fbeaf20d607e94bc8f5f"
+  },
+  "vendor/gaussian_deviate.c": {
+    "repository": "https://github.com/steinhh/ftools",
+    "revision": "9a8a9defd61d6e560a7cf1f44dae21eb4b1c8e90",
+    "path": "src/ftoolss/fmpfit/gaussian_deviate.c",
+    "sha256": "c4fa93afad2f616b4755ab69354b7460b01fd0237fb716e3dca403ce4be9835b"
+  },
+  "vendor/cmpfit-1.5/mpfit.c": {
+    "repository": "https://github.com/steinhh/ftools",
+    "revision": "9a8a9defd61d6e560a7cf1f44dae21eb4b1c8e90",
+    "path": "src/ftoolss/fmpfit/cmpfit-1.5/mpfit.c",
+    "sha256": "465f7e491535a94497c56d3617efd2717a4a8258d41b26c1af44c4d1dc7e9c3c"
+  },
+  "vendor/cmpfit-1.5/mpfit.h": {
+    "repository": "https://github.com/steinhh/ftools",
+    "revision": "9a8a9defd61d6e560a7cf1f44dae21eb4b1c8e90",
+    "path": "src/ftoolss/fmpfit/cmpfit-1.5/mpfit.h",
+    "sha256": "0a4e7eecb1bdc3d5a32f3abd53988c306dac0da848dbb61d6325c65c6f25c69a"
+  },
+  "vendor/cmpfit-1.5/DISCLAIMER": {
+    "repository": "https://github.com/steinhh/ftools",
+    "revision": "9a8a9defd61d6e560a7cf1f44dae21eb4b1c8e90",
+    "path": "src/ftoolss/fmpfit/cmpfit-1.5/DISCLAIMER",
+    "sha256": "739a77d3724dade457e9d3fb2f8eab5fc60d5a5a5f4a4b47d8a60af2edd65a7b"
+  }
+}

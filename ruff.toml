@@ -3,6 +3,7 @@ line-length = 100
 [lint]
 select = ["ALL"]
 ignore = [
+    "CPY001",  # Copyright
     "COM812",  # conflicts with ruff-format trailing-comma insertion
     "D200",    # defer to docformatter for closing-quote placement
     "D413",    # defer to docformatter for blank-line-after-last-section
