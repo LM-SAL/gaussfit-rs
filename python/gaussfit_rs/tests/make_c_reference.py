@@ -1,7 +1,7 @@
 """
 Record reference fits from MUSE's C extension for the parity and figure tests.
 
-Run in an environment where ``muse`` is installed::
+Install the pinned test reference with ``pip install ./third_party/c_reference``, then run::
 
     python -m gaussfit_rs.tests.make_c_reference
 
@@ -164,9 +164,11 @@ def build_cases(params, seed=7):  # noqa: C901
 
 def run_c(dopp, spectra, noise, guides, params):
     """
-    Fit every spectrum with ``muse``'s C extension.
+    Fit every spectrum with the pinned MUSE C extension.
     """
-    from muse.fastfit.fit_single_spectrum_ext import _fit_single_spectrum_c  # noqa: PLC0415
+    from gaussfit_c_reference.fit_single_spectrum_ext import (  # noqa: PLC0415
+        _fit_single_spectrum_c,
+    )
 
     fit_params = {key: cast(params[key]) for key, cast in FIT_KEYS.items()}
     fits = np.empty((len(spectra), 8), dtype=np.float32)
