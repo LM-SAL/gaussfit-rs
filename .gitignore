@@ -11,3 +11,6 @@ __pycache__
 .claude
 docs/_build
 .ruff_cache
+.tox
+.tmp
+figure_test_images

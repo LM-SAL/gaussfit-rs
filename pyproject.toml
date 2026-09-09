@@ -6,7 +6,7 @@ build-backend = "maturin"
 
 [project]
 name = "gaussfit-rs"
-version = "0.2.1"
+version = "0.2.2"
 description = "Rust backend for MUSE fast Gaussian fitting"
 readme = "README.md"
 license = { text = "MIT" }
@@ -32,7 +32,9 @@ docs = [
   "sphinx-copybutton",
 ]
 tests = [
+  "matplotlib>=3.11.0",
   "pytest",
+  "pytest-mpl>=0.19.0",
 ]
 dev = [
   "gaussfit-rs[tests,docs]",
@@ -49,6 +51,17 @@ module-name = "gaussfit_rs._gaussfit_rs"
 
 [tool.pytest.ini_options]
 testpaths = ["python/gaussfit_rs/tests"]
+# Figure tests need --mpl and a pinned matplotlib; see the tox "figure" factor.
+addopts = "-m 'not mpl_image_compare'"
+mpl-results-path = "figure_test_images"
+mpl-use-full-test-name = true
+markers = [
+  "mpl_image_compare: hash-verified matplotlib figure test, applied by gaussfit_rs.tests.helpers.figure_test",
+]
+
+[tool.gilesbot.circleci_artifacts.figure_report]
+url = ".tmp/py313-figure/figure_test_images/fig_comparison.html"
+message = "Click details to see the figure test comparisons, for py313-figure."
 
 [tool.cibuildwheel]
 build-frontend = "build"
