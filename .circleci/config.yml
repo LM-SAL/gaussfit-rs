@@ -34,7 +34,7 @@ jobs:
     docker:
       - image: cimg/python:3.13
     environment:
-      TOXENV=<< parameters.jobname >>
+      TOXENV: << parameters.jobname >>
     steps:
       - run: *no-backports
       - checkout
@@ -66,7 +66,8 @@ jobs:
       - run: ssh-add -D
       # Add private key for deploying to the figure tests repo
       - add_ssh_keys:
-          fingerprints: "SHA256:jVnptuBNlSZXcnweypnpX7Owzt6M8+jJCTDpmtJ9a30"
+          fingerprints:
+            - "SHA256:jVnptuBNlSZXcnweypnpX7Owzt6M8+jJCTDpmtJ9a30"
       - run: ssh-keyscan github.com >> ~/.ssh/known_hosts
       - run: git config --global user.email "lmsal@circleci" && git config --global user.name "Circle CI"
       - run: git clone git@github.com:LM-SAL/figure-test-images.git --depth 1 -b gaussfit-rs-${CIRCLE_BRANCH} ~/gaussfit-rs-figure-tests/

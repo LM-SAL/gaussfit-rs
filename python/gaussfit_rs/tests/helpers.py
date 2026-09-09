@@ -39,7 +39,8 @@ def assert_fit_parity(fits, c_fits, dv, *, indices=None, c_indices=None, labels=
     """
     Assert that Rust fit results satisfy the parity contract with MUSE's C extension.
 
-    Flags and fit windows must be identical, and failed fits must be NaN. Parameters must agree to
+    Flags and fit windows must be identical, and failed fits must be NaN. Successful parameters
+    and chi-square must be finite in both implementations. Parameters must agree to
     ``RTOL`` (relative for amplitude and width, in pixels for velocity, plus ``CHI_ATOL`` for chi-
     square) unless Rust's reduced chi-square is no higher than C's within that same tolerance: the
     float32 C solver can stop at a different point of a flat, bound-limited chi-square valley.
@@ -61,6 +62,10 @@ def assert_fit_parity(fits, c_fits, dv, *, indices=None, c_indices=None, labels=
             )
         assert np.isnan(fits[rows & ~successful, :7]).all(), f"{label}: failed fits must be NaN"
         r, c = fits[rows & successful], c_fits[rows & successful]
+        for name, values in (("Rust", r), ("C", c)):
+            assert np.isfinite(values[:, [0, 1, 2, 6]]).all(), (
+                f"{label}: {name} successful parameters and chi-square must be finite"
+            )
         scale = np.stack(
             [np.maximum(np.abs(c[:, 0]), 1e-6), np.full(len(c), dv), np.abs(c[:, 2])], axis=1
         )
