@@ -6,7 +6,7 @@ build-backend = "maturin"
 
 [project]
 name = "gaussfit-rs"
-version = "1.1.0"
+version = "1.2.0"
 description = "Rust backend for MUSE fast Gaussian fitting"
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -48,9 +48,10 @@ Documentation = "https://gaussfit-rs.readthedocs.io"
 [tool.maturin]
 python-source = "python"
 module-name = "gaussfit_rs._gaussfit_rs"
-# Keep the sdist to what a build needs. The C reference is test-only and carries its own licenses.
+# Keep the sdist to what a build needs: the patched rmpfit under third_party/ is a Cargo path
+# dependency and must ship; the C reference is test-only and carries its own licenses.
 exclude = [
-  "third_party/**",
+  "third_party/c_reference/**",
   "benchmarks/**",
   "docs/**",
   ".circleci/**",

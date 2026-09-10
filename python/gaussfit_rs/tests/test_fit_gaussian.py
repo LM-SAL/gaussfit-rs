@@ -236,3 +236,53 @@ def test_f32_dtype_auto_conversion():
     )
     assert r.dtype == np.float32
     assert r[7] == FLAG_SUCCESS
+
+
+def test_f32_bound_limited_step_does_not_stall():
+    # Regression guard for the MPFIT bound-snap stall fixed in third_party/rmpfit
+    # (VENDORED.md). C-parity corpus window "wide" seed 1 row 314, normalised by the
+    # peak: sigma belongs on width_min. Stock rmpfit 2.0.0 lands sigma two ULP above
+    # the bound and reports success at reduced chi-square 56.66; C reaches 0.7628.
+    x = np.array(
+        [
+            -238.98304748535156,
+            -228.8135528564453,
+            -218.64407348632812,
+            -208.47457885742188,
+            -198.30508422851562,
+            -188.13558959960938,
+            -177.96609497070312,
+            -167.79661560058594,
+            -157.6271209716797,
+            -147.45762634277344,
+            -137.2881317138672,
+        ],
+        dtype=np.float32,
+    )
+    y = np.array(
+        [
+            -0.02878176048398018,
+            0.0066301412880420685,
+            -0.021215319633483887,
+            -0.013344751670956612,
+            0.033882372081279755,
+            1.0,
+            0.7889260649681091,
+            -0.05167832225561142,
+            -0.017880365252494812,
+            -0.007661588955670595,
+            0.011638442054390907,
+        ],
+        dtype=np.float32,
+    )
+    r = fit_gaussian_f32(
+        x=x,
+        y=y,
+        error=np.full(11, 0.031336888670921326, dtype=np.float32),
+        initial=np.array([1.0, -188.13558959960938, 30.0], dtype=np.float32),
+        lower_bounds=np.array([0.1, -238.98304748535156, 5.0], dtype=np.float32),
+        upper_bounds=np.array([2.0, -137.2881317138672, 200.0], dtype=np.float32),
+    )
+    assert r[7] == FLAG_SUCCESS
+    assert r[6] < 1.0, f"reduced chi2 {r[6]}"
+    assert r[0] > 1.0, f"amplitude {r[0]}"

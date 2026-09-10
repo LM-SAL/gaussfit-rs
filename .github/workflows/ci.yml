@@ -83,6 +83,10 @@ jobs:
         run: |
           python -m pip install -U --user twine
           python -m twine check dist/*
+      - name: Install from source distribution
+        run: |
+          python -m pip install --user dist/*.tar.gz
+          python -c "import gaussfit_rs; print(gaussfit_rs.__version__)"
 
   test:
     needs: [core, sdist_verify]
