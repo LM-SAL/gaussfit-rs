@@ -10,4 +10,5 @@ Fast, parallel Gaussian fitting for spectroscopic data.
    installation
    userguide
    api
+   design-notes
    changelog
