@@ -1,6 +1,6 @@
 [package]
 name = "gaussfit-rs"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Rust backend for MUSE fast Gaussian fitting"
 license = "BSD-3-Clause"
@@ -16,7 +16,8 @@ num-traits = "0.2"
 numpy = "0.28"
 pyo3 = { version = "0.28", features = ["extension-module"] }
 rayon = "1"
-rmpfit = "=2.0.0"
+# rmpfit 2.0.0 plus the bound-snap fix; see third_party/rmpfit/VENDORED.md.
+rmpfit = { path = "third_party/rmpfit" }
 
 [profile.release]
 lto = true

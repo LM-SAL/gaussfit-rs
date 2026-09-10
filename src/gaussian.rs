@@ -123,10 +123,14 @@ impl<F: Float> MPFitter for GaussianProblem<'_, F> {
 /// iteration limit) or the inputs are invalid.
 ///
 /// The fit is delegated to [`rmpfit`], a pure-Rust port of the CMPFIT/MINPACK
-/// `mpfit` routine, so the convergence and bound-handling semantics match the
-/// original C extension. Parameter errors use the full three-parameter
-/// Hessian, including parameters at their bounds, matching its SciPy-style
-/// covariance calculation.
+/// `mpfit` routine, so the convergence semantics match the original C
+/// extension. The vendored copy in `third_party/rmpfit` carries one local
+/// patch: a step clamped at a bound lands that parameter exactly on the
+/// bound, where stock MPFIT (C and Rust alike) can stop a few ULP short and
+/// then stall with a spurious "converged" status; see
+/// `third_party/rmpfit/VENDORED.md`. Parameter errors use the full
+/// three-parameter Hessian, including parameters at their bounds, matching
+/// the C SciPy-style covariance calculation.
 pub fn fit_gaussian_bounded_with_config<F: Float>(
     x: &[F],
     y: &[F],
