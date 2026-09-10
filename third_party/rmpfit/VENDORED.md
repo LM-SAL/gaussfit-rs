@@ -29,7 +29,7 @@ coordinates within one ULP of a limit onto it. `x + alpha * step` can round a co
 past the limit; the snap misses it, the parameter never counts as pegged, the next step's
 `alpha` collapses to ~1e-14 and the solver reports convergence with no progress. The patch
 records which bound set `alpha` and lands that coordinate exactly on its limit. CMPFIT has the
-same hazard. See "Bound-Limited Steps And The MPFIT Snap Hazard" in `docs/design-notes.md` for
+same hazard. See "Bound-Limited Steps And The MPFIT Snap Hazard" in `docs/design-notes.rst` for
 the evidence (over 14,197 corpus windows: 18 fits change, all improvements, no stalls left).
 
 Every local change is marked `gaussfit-rs local patch` at the patch site. Nothing else in the
@@ -41,8 +41,9 @@ patch -R -p1 -d third_party/rmpfit -o - < third_party/rmpfit/bound-snap.patch | 
 ```
 
 Known but not patched: `lmpar` clamps `par` with `max(paru)` where CMPFIT and MINPACK use
-`min`. Fixing it changed one corpus row for the worse against the C reference, so it is only
-reported upstream.
+`min`, a port deviation reported upstream. Correcting it is nearly a no-op but moves one
+low-SNR corpus fit (`muse` seed 44) to a worse local minimum than the C reference, which
+fails the one-sided parity gate; the design note has the measurement.
 
 ## Wiring
 
@@ -74,4 +75,6 @@ first publish year) is unverified because the upstream host is behind an anti-bo
 3. Update the version, checksums and date in this file; regenerate `bound-snap.patch` with
    `diff -u --label a/src/lib.rs --label b/src/lib.rs <upstream lib.rs> src/lib.rs`.
 4. `cargo test`, then the live parity test with the C reference installed
-   (`tox -r -e py313-cparity`, 46 seeds): Rust must never be worse than C.
+   (`tox -r -e py313-cparity`, 46 seeds): Rust must never be worse than C. A release that
+   corrects `lmpar` (see above) will fail on `muse` seed 44 and needs a decision, not a
+   wider tolerance.
