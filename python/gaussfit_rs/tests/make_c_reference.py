@@ -5,10 +5,23 @@ Install the pinned test reference with ``pip install ./third_party/c_reference``
 
     python -m gaussfit_rs.tests.make_c_reference
 
-One fixture is written per entry of ``PARAMETER_SETS``. The C extension is the
-reference implementation; two intentional differences are kept out of the cases:
-all-negative windows (C fits them, Rust reports no peak) and inf pixels or zero
-noise (the C solver does not return).
+One fixture is written per entry of ``PARAMETER_SETS`` at ``FIXTURE_SEED``; the live parity
+test runs the same generator over many seeds. The C extension is the reference
+implementation. Known intentional differences, kept out of the corpus or listed here:
+
+- all-negative search windows: C fits them (negative amplitude), Rust reports no peak;
+  ``build_cases`` drops such cases;
+- non-finite or non-positive noise, or a non-finite velocity, at a sample: Rust drops the
+  sample, C keeps it, and on NaN noise or NaN velocity the C solver never returns;
+- inf pixels or zero noise: the C solver never returns, so the generator never emits them;
+- the pinned C solver has no evaluation cap (``maxfev = 0``) and its LM loop only advances the
+  iteration count on accepted steps, so it can spin forever even on finite data ("muse" seed
+  27, skipped by the live test); rmpfit caps evaluations at ``200 * (nfree + 1)``;
+- mpfit status 5 (iteration limit): C reports success, Rust reports no convergence;
+- singular Hessian: C falls back to a Gauss-Jordan inverse for the errors, Rust reports zero
+  errors.
+
+Run the generator under a watchdog when adding cases.
 """
 
 from pathlib import Path
@@ -16,6 +29,7 @@ from pathlib import Path
 import numpy as np
 
 DATA_DIR = Path(__file__).parent / "data"
+FIXTURE_SEED = 7
 FIT_KEYS = {
     "velocity_range": float,
     "npix": int,
@@ -58,13 +72,29 @@ PARAMETER_SETS = {
 }
 
 
-def build_cases(params, seed=7):  # noqa: C901
+def _has_non_negative_peak(dopp, spectra, guides, params):
+    """
+    Mask of cases whose slack-widened search window is not all-negative.
+
+    C fits an all-negative window (negative amplitude) where Rust reports no peak, a documented
+    intentional difference, so such cases are dropped. Empty and all-NaN windows and NaN guides
+    are kept: both implementations report no peak for them.
+    """
+    dv = np.float32(np.median(np.gradient(dopp)))
+    reach = np.float32(params["velocity_range"]) + dv * np.float32(params["npix_slack"])
+    in_window = np.abs(dopp[None, :] - guides[:, None]) <= reach
+    peak = np.max(np.where(in_window & np.isfinite(spectra), spectra, -np.inf), axis=1)
+    return ~np.isfinite(peak) | (peak >= 0)
+
+
+def build_cases(params, seed=FIXTURE_SEED):  # noqa: C901
     """
     Return ``(dopp, spectra, noise, guides, labels)`` for one parameter set.
 
     Families: clean, white_noise, poisson, low_snr, continuum, blend, wings,
     asymmetric, narrow, broad, flat_top, hot_pixel, masked and degenerate.
     Guides are the true centre, zero, an offset within the search range, or NaN.
+    Cases whose search window is all-negative are dropped (see ``_has_non_negative_peak``).
     """
     rng = np.random.default_rng(seed)
     n, dv = params["n_pixels"], params["dv"]
@@ -159,7 +189,9 @@ def build_cases(params, seed=7):  # noqa: C901
     add("degenerate", gaussian(5.0, edge, 2 * dv), np.full(n, 0.05), edge)
 
     labels, spectra, noise, guides = (np.array(column) for column in zip(*cases, strict=True))
-    return dopp, spectra, noise, guides.astype(np.float32), labels
+    guides = guides.astype(np.float32)
+    keep = _has_non_negative_peak(dopp, spectra, guides, params)
+    return dopp, spectra[keep], noise[keep], guides[keep], labels[keep]
 
 
 def run_c(dopp, spectra, noise, guides, params):

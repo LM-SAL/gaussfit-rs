@@ -58,6 +58,16 @@ recreate the environment with `tox -r -e py313-cparity`.
 
 Do not modify the C implementation to make Rust tests pass.
 
+The pinned solver has no evaluation cap (`conf.maxfev = 0`) and its LM loop
+only advances the iteration count on accepted steps, so some inputs never
+return: NaN noise or NaN velocity values inside the fit window, inf pixels,
+zero noise, and at least one finite corpus case (`muse` seed 27). Run the
+generator and any new sweep under a watchdog, and list seeds that hang in
+`HANGS_C` in `test_c_parity.py`. The vendored `third_party/rmpfit` carries a
+bound-snap fix that stock CMPFIT lacks, so Rust may legitimately beat this
+reference on windows where C stalls at a bound; the parity contract is
+one-sided for that reason.
+
 To regenerate the recorded fixtures with the installed reference:
 
 ```bash
