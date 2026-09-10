@@ -41,7 +41,7 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
 name = "gaussfit-rs"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "num-traits",
  "numpy",
@@ -256,8 +256,6 @@ dependencies = [
 [[package]]
 name = "rmpfit"
 version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3e8006f8d69fcd1b9cbbf7b74999549dfe44b504b8c4f80727ae40a2b856528"
 
 [[package]]
 name = "rustc-hash"

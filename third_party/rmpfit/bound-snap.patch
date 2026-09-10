@@ -1,0 +1,57 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1743,6 +1743,10 @@
+              * we should take a step in the same direction but shorter distance.
+              * The step should take us right to the limit in that case.
+              */
++            // gaussfit-rs local patch (see VENDORED.md): remember which bound
++            // limited alpha so that coordinate can be placed exactly on it.
++            let mut alpha_limited_low: Option<usize> = None;
++            let mut alpha_limited_up: Option<usize> = None;
+             for j in 0..self.nfree {
+                 let lpegged = self.qllim[j] && self.x[j] <= self.llim[j];
+                 let upegged = self.qulim[j] && self.x[j] >= self.ulim[j];
+@@ -1754,10 +1758,20 @@
+                     self.wa1[j] = 0.;
+                 }
+                 if dwa1 && self.qllim[j] && self.x[j] + self.wa1[j] < self.llim[j] {
+-                    alpha = alpha.min((self.llim[j] - self.x[j]) / self.wa1[j]);
++                    let a_lo = (self.llim[j] - self.x[j]) / self.wa1[j];
++                    if a_lo < alpha {
++                        alpha = a_lo;
++                        alpha_limited_low = Some(j);
++                        alpha_limited_up = None;
++                    }
+                 }
+                 if dwa1 && self.qulim[j] && self.x[j] + self.wa1[j] > self.ulim[j] {
+-                    alpha = alpha.min((self.ulim[j] - self.x[j]) / self.wa1[j]);
++                    let a_up = (self.ulim[j] - self.x[j]) / self.wa1[j];
++                    if a_up < alpha {
++                        alpha = a_up;
++                        alpha_limited_up = Some(j);
++                        alpha_limited_low = None;
++                    }
+                 }
+             }
+             /* Scale the resulting vector, advance to the next position */
+@@ -1765,6 +1779,20 @@
+                 self.wa1[j] *= alpha;
+                 self.wa2[j] = self.x[j] + self.wa1[j];
+                 /*
++                 * gaussfit-rs local patch (see VENDORED.md): land the
++                 * coordinate that limited alpha exactly on its bound.
++                 * x + alpha*wa1 can round a few ULP past the limit, which
++                 * leaves the peg test (x <= llim) false and re-triggers the
++                 * clamp on the next iteration, collapsing alpha for every
++                 * parameter and ending the fit with no progress.
++                 */
++                if Some(j) == alpha_limited_low {
++                    self.wa2[j] = self.llim[j];
++                }
++                if Some(j) == alpha_limited_up {
++                    self.wa2[j] = self.ulim[j];
++                }
++                /*
+                  * Adjust the output values.  If the step put us exactly
+                  * on a boundary, make sure it is exact.
+                  */
