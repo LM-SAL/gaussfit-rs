@@ -13,11 +13,34 @@ Index   Field            Description
 4       velocity_err     1-σ uncertainty on velocity [km/s]
 5       sigma_err        1-σ uncertainty on sigma [km/s]
 6       reduced_chi2     Reduced χ² of best fit
-7       flag             Status: FLAG_SUCCESS / FLAG_NO_LOCAL_MAX / FLAG_NO_CONVERGENCE
-8       quality          The QUALITY_* bits, 0 for failed fits
+7       flag             Fit status, one of the values below
+8       quality          Quality bit mask, a sum of the bits below; 0 for failed fits
 ======  ===============  =====================================================
 
 Fields 0-6 are ``NaN`` when ``flag != FLAG_SUCCESS``.
+
+=====  ===================  ==========================================================
+Flag   Name                 Meaning
+=====  ===================  ==========================================================
+0      FLAG_SUCCESS         The solver converged; the row holds the fit.
+1      FLAG_NO_LOCAL_MAX    No positive peak in the search window (including a
+                            non-finite guide, or fewer than 3 usable samples).
+2      FLAG_NO_CONVERGENCE  The solver stopped without meeting a convergence criterion.
+=====  ===================  ==========================================================
+
+=====  =====================  ========================================================
+Bit    Name                   Meaning
+=====  =====================  ========================================================
+1      QUALITY_UNCONSTRAINED  A parameter's error is not smaller than the interval it
+                              was bounded to (velocity: ``2 * dv * npix``; width:
+                              ``width_max - width_min``); the data do not constrain it.
+2      QUALITY_ZERO_ERROR     A formal error is exactly zero: a near-singular Hessian or
+                              an exact fit.
+4      QUALITY_PEGGED         A fitted parameter sits exactly on a bound. Reported, not
+                              judged: legitimate saturation sets it too.
+=====  =====================  ========================================================
+
+Only converged fits carry quality bits; test them with ``int(row[8]) & QUALITY_...``.
 """
 
 from __future__ import annotations
@@ -47,10 +70,26 @@ __all__ = [
 
 _SPECTRA_NDIM = 2
 
-# Fit-status flag values returned in column 7
+# Fit-status flag values returned in column 7, as float32 like the rest of the row.
 FLAG_SUCCESS: float = 0.0
+"""
+The solver converged; the row holds the fit.
+"""
+
 FLAG_NO_LOCAL_MAX: float = 1.0
+"""
+No positive peak in the search window: an empty or all-negative window, a non-finite guide, or fewer
+than 3 usable samples around the peak.
+
+Fields 0-6 are NaN.
+"""
+
 FLAG_NO_CONVERGENCE: float = 2.0
+"""
+The solver stopped without meeting a convergence criterion (``max_iter`` or the evaluation cap).
+
+Fields 0-6 are NaN.
+"""
 
 # Quality bits, returned in column 8 as a float. Bits are reported
 # separately instead of folded into one boolean because they answer different questions; a
