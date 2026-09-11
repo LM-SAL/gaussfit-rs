@@ -78,8 +78,8 @@ The solver converged; the row holds the fit.
 
 FLAG_NO_LOCAL_MAX: float = 1.0
 """
-No positive peak in the search window: an empty or all-negative window, a non-finite guide, or fewer
-than 3 usable samples around the peak.
+No positive peak in the search window, which covers an empty or all-negative window, a non-finite
+guide, and fewer than 3 usable samples around the peak.
 
 Fields 0-6 are NaN.
 """
@@ -106,7 +106,9 @@ A formal error is exactly zero, including singular or exact fits.
 
 QUALITY_PEGGED: int = 4
 """
-A fitted parameter sits exactly on a bound: reported, not judged (saturation also sets it).
+A fitted parameter sits exactly on a bound.
+
+Reported, not judged; legitimate saturation sets it too.
 """
 
 

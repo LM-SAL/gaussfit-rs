@@ -16,17 +16,16 @@ Result type
 .. autoclass:: gaussfit_rs.FitResult
    :members: from_array, converged
 
-Constants
----------
+Result rows and constants
+-------------------------
 
-Fit status, column 7 of every result row:
+.. automodule:: gaussfit_rs.fitting
 
-.. autodata:: gaussfit_rs.FLAG_SUCCESS
-.. autodata:: gaussfit_rs.FLAG_NO_LOCAL_MAX
-.. autodata:: gaussfit_rs.FLAG_NO_CONVERGENCE
+The constants are re-exported from the ``gaussfit_rs`` package.
 
-Quality bits, summed in column 8 of converged spectrum fits:
-
-.. autodata:: gaussfit_rs.QUALITY_UNCONSTRAINED
-.. autodata:: gaussfit_rs.QUALITY_ZERO_ERROR
-.. autodata:: gaussfit_rs.QUALITY_PEGGED
+.. autodata:: gaussfit_rs.fitting.FLAG_SUCCESS
+.. autodata:: gaussfit_rs.fitting.FLAG_NO_LOCAL_MAX
+.. autodata:: gaussfit_rs.fitting.FLAG_NO_CONVERGENCE
+.. autodata:: gaussfit_rs.fitting.QUALITY_UNCONSTRAINED
+.. autodata:: gaussfit_rs.fitting.QUALITY_ZERO_ERROR
+.. autodata:: gaussfit_rs.fitting.QUALITY_PEGGED
