@@ -131,7 +131,8 @@ fn validate_fit_arrays<F: Float>(x: &[F], y: &[F], error: &[F]) -> PyResult<()> 
 /// Fit a single Gaussian to one spectrum.
 ///
 /// Returns an 8-element array `[amp, vel, sigma, amp_err, vel_err, sig_err,
-/// reduced_chi2, flag]` and the `(i_left, i_right)` pixel window used. `flag`
+/// reduced_chi2, flag]`, the `(i_left, i_right)` pixel window used, and the
+/// solver counts `[n_iter, n_fev]` (-1 unless the fit converged). `flag`
 /// is `FLAG_SUCCESS`, `FLAG_NO_LOCAL_MAX` (no positive peak in the search
 /// window, including a non-finite guide, or fewer than 3 valid samples) or
 /// `FLAG_NO_CONVERGENCE`; all other fields are NaN unless the flag is success.
@@ -162,7 +163,11 @@ pub(crate) fn fit_single_spectrum<'py>(
     gtol: f32,
     max_iter: isize,
     quality: bool,
-) -> PyResult<(Bound<'py, PyArray1<f32>>, (i32, i32))> {
+) -> PyResult<(
+    Bound<'py, PyArray1<f32>>,
+    (i32, i32),
+    Bound<'py, PyArray1<i32>>,
+)> {
     let sg_xpixels = validate_n_pixels(sg_xpixels)?;
     validate_spectrum_options(
         velocity_range,
@@ -216,7 +221,12 @@ pub(crate) fn fit_single_spectrum<'py>(
         // Opt-in ninth column: quality bits (see the design notes).
         values.push(f32::from(result.quality));
     }
-    Ok((values.into_pyarray(py), (result.i_left, result.i_right)))
+    let counts = vec![result.n_iter, result.n_fev];
+    Ok((
+        values.into_pyarray(py),
+        (result.i_left, result.i_right),
+        counts.into_pyarray(py),
+    ))
 }
 
 /// Fit a bounded Gaussian to arbitrary (x, y ± error) data.
@@ -338,8 +348,172 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
     gtol: f32,
     max_iter: isize,
     quality: bool,
-) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<i32>>)> {
+) -> PyResult<(
+    Bound<'py, PyArray2<f32>>,
+    Bound<'py, PyArray2<i32>>,
+    Bound<'py, PyArray2<i32>>,
+)> {
     let sg_xpixels = validate_n_pixels(sg_xpixels)?;
+    if dopp_slit.len() < sg_xpixels {
+        return Err(PyValueError::new_err(
+            "dopp_slit must be at least sg_xpixels long",
+        ));
+    }
+    let dopp_data = dopp_slit
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("dopp_slit must be a contiguous float32 array"))?;
+    let dopp_window = &dopp_data[..sg_xpixels];
+
+    fit_spectra_rows(
+        py,
+        &spectra,
+        &spec_noise,
+        &guide_velocities,
+        |_| dopp_window,
+        sg_xpixels,
+        velocity_range,
+        npix,
+        npix_slack,
+        dv,
+        width_min,
+        amplitude_rel_min,
+        amplitude_rel_max,
+        width_max,
+        width_guess,
+        xtol,
+        ftol,
+        gtol,
+        max_iter,
+        quality,
+    )
+}
+
+/// Fit Gaussians to N spectra, each against the Doppler grid of its own slit.
+///
+/// `dopp_slit` is `(n_slit, n_pixels)` and row `i` is fitted against
+/// `dopp_slit[slit_index[i]]`, so data with a slit axis is fitted in one call
+/// instead of one staged batch per slit. Otherwise identical to
+/// `fit_spectra_batch_guided`.
+#[pyfunction]
+#[pyo3(signature = (spectra, dopp_slit, spec_noise, guide_velocities, slit_index,
+    velocity_range, npix, npix_slack, dv, width_min, sg_xpixels, amplitude_rel_min,
+    amplitude_rel_max, width_max, width_guess, xtol=XTOL, ftol=FTOL, gtol=GTOL,
+    max_iter=MAX_ITER_PY, quality=false))]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub(crate) fn fit_spectra_batch_slits<'py>(
+    py: Python<'py>,
+    spectra: PyReadonlyArray2<'py, f32>,
+    dopp_slit: PyReadonlyArray2<'py, f32>,
+    spec_noise: PyReadonlyArray2<'py, f32>,
+    guide_velocities: PyReadonlyArray1<'py, f32>,
+    slit_index: PyReadonlyArray1<'py, i32>,
+    velocity_range: f32,
+    npix: i32,
+    npix_slack: i32,
+    dv: f32,
+    width_min: f32,
+    sg_xpixels: isize,
+    amplitude_rel_min: f32,
+    amplitude_rel_max: f32,
+    width_max: f32,
+    width_guess: f32,
+    xtol: f32,
+    ftol: f32,
+    gtol: f32,
+    max_iter: isize,
+    quality: bool,
+) -> PyResult<(
+    Bound<'py, PyArray2<f32>>,
+    Bound<'py, PyArray2<i32>>,
+    Bound<'py, PyArray2<i32>>,
+)> {
+    let sg_xpixels = validate_n_pixels(sg_xpixels)?;
+    let n_slit = dopp_slit.shape()[0];
+    let n_dopp = dopp_slit.shape()[1];
+    if n_dopp < sg_xpixels {
+        return Err(PyValueError::new_err(
+            "dopp_slit columns must be at least sg_xpixels",
+        ));
+    }
+    if slit_index.len() != spectra.shape()[0] {
+        return Err(PyValueError::new_err(
+            "slit_index length must match spectra rows",
+        ));
+    }
+    let dopp_data = dopp_slit
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("dopp_slit must be a C-contiguous float32 array"))?;
+    let slit_data = slit_index
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("slit_index must be a contiguous int32 array"))?;
+    if slit_data
+        .iter()
+        .any(|&slit| slit < 0 || slit as usize >= n_slit)
+    {
+        return Err(PyValueError::new_err(
+            "slit_index values must be in [0, dopp_slit rows)",
+        ));
+    }
+
+    fit_spectra_rows(
+        py,
+        &spectra,
+        &spec_noise,
+        &guide_velocities,
+        |i| {
+            let start = slit_data[i] as usize * n_dopp;
+            &dopp_data[start..start + sg_xpixels]
+        },
+        sg_xpixels,
+        velocity_range,
+        npix,
+        npix_slack,
+        dv,
+        width_min,
+        amplitude_rel_min,
+        amplitude_rel_max,
+        width_max,
+        width_guess,
+        xtol,
+        ftol,
+        gtol,
+        max_iter,
+        quality,
+    )
+}
+
+/// Shared body of the batch entry points: validates the fit options and the
+/// per-row arrays, then fits every row in parallel against the Doppler window
+/// `dopp_row(i)`, which must already be trimmed to `sg_xpixels` samples.
+/// Returns the fit rows, the `(i_left, i_right)` windows, and the solver
+/// counts `[n_iter, n_fev]` per row (-1 unless the fit converged).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn fit_spectra_rows<'py, 'd>(
+    py: Python<'py>,
+    spectra: &PyReadonlyArray2<'py, f32>,
+    spec_noise: &PyReadonlyArray2<'py, f32>,
+    guide_velocities: &PyReadonlyArray1<'py, f32>,
+    dopp_row: impl Fn(usize) -> &'d [f32] + Sync,
+    sg_xpixels: usize,
+    velocity_range: f32,
+    npix: i32,
+    npix_slack: i32,
+    dv: f32,
+    width_min: f32,
+    amplitude_rel_min: f32,
+    amplitude_rel_max: f32,
+    width_max: f32,
+    width_guess: f32,
+    xtol: f32,
+    ftol: f32,
+    gtol: f32,
+    max_iter: isize,
+    quality: bool,
+) -> PyResult<(
+    Bound<'py, PyArray2<f32>>,
+    Bound<'py, PyArray2<i32>>,
+    Bound<'py, PyArray2<i32>>,
+)> {
     validate_spectrum_options(
         velocity_range,
         npix,
@@ -371,18 +545,10 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
             "guide_velocities length must match spectra rows",
         ));
     }
-    if dopp_slit.len() < sg_xpixels {
-        return Err(PyValueError::new_err(
-            "dopp_slit must be at least sg_xpixels long",
-        ));
-    }
 
     let spectra_data = spectra
         .as_slice()
         .map_err(|_| PyValueError::new_err("spectra must be a C-contiguous float32 array"))?;
-    let dopp_data = dopp_slit
-        .as_slice()
-        .map_err(|_| PyValueError::new_err("dopp_slit must be a contiguous float32 array"))?;
     let noise_data = spec_noise
         .as_slice()
         .map_err(|_| PyValueError::new_err("spec_noise must be a C-contiguous float32 array"))?;
@@ -390,24 +556,24 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
         PyValueError::new_err("guide_velocities must be a contiguous float32 array")
     })?;
 
-    let dopp_window = &dopp_data[..sg_xpixels];
-
     // The quality bitmask is an opt-in ninth column, so the default
     // eight-column contract stays byte-identical for every existing caller.
     let stride = if quality { 9 } else { 8 };
     let mut fit_values = vec![f32::NAN; n_spectra * stride];
     let mut idx_values = vec![0i32; n_spectra * 2];
+    let mut meta_values = vec![-1i32; n_spectra * 2];
 
     py.detach(|| {
         fit_values
             .par_chunks_mut(stride)
             .zip(idx_values.par_chunks_mut(2))
+            .zip(meta_values.par_chunks_mut(2))
             .enumerate()
-            .for_each(|(i, (fit_row, idx_row))| {
+            .for_each(|(i, ((fit_row, idx_row), meta_row))| {
                 let row_start = i * n_pixels;
                 let result = fit_single_spectrum_core(
                     &spectra_data[row_start..row_start + sg_xpixels],
-                    dopp_window,
+                    dopp_row(i),
                     &noise_data[row_start..row_start + sg_xpixels],
                     guide_data[i],
                     velocity_range,
@@ -427,6 +593,8 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
                 }
                 idx_row[0] = result.i_left;
                 idx_row[1] = result.i_right;
+                meta_row[0] = result.n_iter;
+                meta_row[1] = result.n_fev;
             })
     });
 
@@ -434,6 +602,12 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
         .map_err(|_| PyRuntimeError::new_err("failed to build fit result array"))?;
     let idx_out = Array2::<i32>::from_shape_vec((n_spectra, 2), idx_values)
         .map_err(|_| PyRuntimeError::new_err("failed to build index result array"))?;
+    let meta_out = Array2::<i32>::from_shape_vec((n_spectra, 2), meta_values)
+        .map_err(|_| PyRuntimeError::new_err("failed to build solver count array"))?;
 
-    Ok((fit_out.into_pyarray(py), idx_out.into_pyarray(py)))
+    Ok((
+        fit_out.into_pyarray(py),
+        idx_out.into_pyarray(py),
+        meta_out.into_pyarray(py),
+    ))
 }

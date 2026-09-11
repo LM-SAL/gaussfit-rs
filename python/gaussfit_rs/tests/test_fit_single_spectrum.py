@@ -15,6 +15,7 @@ from gaussfit_rs import (
     fit_single_spectrum,
     fit_spectra_batch,
     fit_spectra_batch_guided,
+    fit_spectra_batch_slits,
 )
 
 SIGMA_TRUE = 30.0  # km/s
@@ -214,6 +215,129 @@ def test_guided_batch_matches_single_spectrum(batch_data):
         np.testing.assert_array_equal(fits[i], r_single, err_msg=f"row {i} mismatch")
         assert indices[i, 0] == il
         assert indices[i, 1] == ir
+
+
+def _slit_grids(v):
+    # Three slits whose velocity grids are offset from one another.
+    return np.stack([v - 20.0, v, v + 20.0]).astype(np.float32)
+
+
+def test_slits_batch_with_constant_index_matches_guided(batch_data):
+    n = batch_data["n"]
+    dopp = _slit_grids(batch_data["v"])
+    guide_velocities = np.linspace(-15.0, 15.0, n, dtype=np.float32)
+    batch_kw = {key: value for key, value in COMMON_KW.items() if key != "guide_velocity"}
+    for slit in range(len(dopp)):
+        expected = fit_spectra_batch_guided(
+            spectra=batch_data["spectra"],
+            dopp_slit=dopp[slit],
+            spec_noise=batch_data["noise"],
+            guide_velocities=guide_velocities,
+            **batch_kw,
+        )
+        actual = fit_spectra_batch_slits(
+            spectra=batch_data["spectra"],
+            dopp_slit=dopp,
+            spec_noise=batch_data["noise"],
+            guide_velocities=guide_velocities,
+            slit_index=np.full(n, slit, dtype=np.int32),
+            **batch_kw,
+        )
+        for got, want in zip(actual, expected, strict=True):
+            np.testing.assert_array_equal(got, want, err_msg=f"slit {slit}")
+
+
+def test_slits_batch_routes_each_row_to_its_slit(batch_data):
+    dopp = _slit_grids(batch_data["v"])
+    slit_index = (np.arange(batch_data["n"]) % len(dopp)).astype(np.int32)
+    guide_velocities = np.zeros(batch_data["n"], dtype=np.float32)
+    batch_kw = {key: value for key, value in COMMON_KW.items() if key != "guide_velocity"}
+    fits, indices = fit_spectra_batch_slits(
+        spectra=batch_data["spectra"],
+        dopp_slit=dopp,
+        spec_noise=batch_data["noise"],
+        guide_velocities=guide_velocities,
+        slit_index=slit_index,
+        **batch_kw,
+    )
+    assert fits.shape == (batch_data["n"], 8)
+    for i in range(10):
+        r_single, (il, ir) = fit_single_spectrum(
+            spectrum=batch_data["spectra"][i],
+            dopp_slit=dopp[slit_index[i]],
+            spec_noise=batch_data["noise"][i],
+            **COMMON_KW,
+        )
+        np.testing.assert_array_equal(fits[i], r_single, err_msg=f"row {i} mismatch")
+        assert (indices[i, 0], indices[i, 1]) == (il, ir)
+    # The line sits at 0 on grid 1, so grids 0 and 2 shift its velocity by -20 and +20.
+    velocities = fits[:, 1]
+    assert np.all(velocities[slit_index == 0] < -10.0)
+    assert np.all(np.abs(velocities[slit_index == 1]) < 10.0)
+    assert np.all(velocities[slit_index == 2] > 10.0)
+
+
+@pytest.mark.parametrize(
+    ("slit_index", "dopp_rows", "match"),
+    [
+        (np.array([0, 3], dtype=np.int32), 3, r"slit_index values"),
+        (np.array([0, -1], dtype=np.int32), 3, r"slit_index values"),
+        (np.array([0], dtype=np.int32), 3, r"slit_index length"),
+        (np.array([0, 0], dtype=np.int32), 1, r"2-D"),
+    ],
+)
+def test_slits_batch_validates_index_and_grid(slit_index, dopp_rows, match):
+    v, spec, err = _make_spectrum()
+    dopp = _slit_grids(v)[:dopp_rows] if dopp_rows > 1 else v
+    batch_kw = {key: value for key, value in COMMON_KW.items() if key != "guide_velocity"}
+    with pytest.raises(ValueError, match=match):
+        fit_spectra_batch_slits(
+            spectra=np.stack([spec, spec]),
+            dopp_slit=dopp,
+            spec_noise=np.stack([err, err]),
+            guide_velocities=np.zeros(2, dtype=np.float32),
+            slit_index=slit_index,
+            **batch_kw,
+        )
+
+
+def test_meta_counts_are_opt_in_and_match_between_entry_points(batch_data):
+    v, spec, err = _make_spectrum()
+    r, _window, counts = fit_single_spectrum(
+        spectrum=spec, dopp_slit=v, spec_noise=err, meta=True, **COMMON_KW
+    )
+    assert r[7] == FLAG_SUCCESS
+    assert counts.dtype == np.int32
+    assert counts.shape == (2,)
+    assert counts[1] >= counts[0] >= 1
+    assert len(fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, **COMMON_KW)) == 2
+    _, _, failed = fit_single_spectrum(
+        spectrum=spec,
+        dopp_slit=v,
+        spec_noise=err,
+        meta=True,
+        **{**COMMON_KW, "guide_velocity": np.nan},
+    )
+    np.testing.assert_array_equal(failed, [-1, -1])
+
+    fits, _, batch_counts = fit_spectra_batch(
+        spectra=batch_data["spectra"],
+        dopp_slit=batch_data["v"],
+        spec_noise=batch_data["noise"],
+        meta=True,
+        **COMMON_KW,
+    )
+    assert batch_counts.shape == (batch_data["n"], 2)
+    assert (batch_counts[fits[:, 7] == FLAG_SUCCESS] >= 1).all()
+    for i in range(5):
+        _, _, single = fit_single_spectrum(
+            spectrum=batch_data["spectra"][i],
+            dopp_slit=batch_data["v"],
+            spec_noise=batch_data["noise"][i],
+            meta=True,
+            **COMMON_KW,
+        )
+        np.testing.assert_array_equal(batch_counts[i], single, err_msg=f"row {i}")
 
 
 def test_batch_all_converge_on_clean_data(batch_data):

@@ -13,6 +13,10 @@ pub struct FitSingleSpectrumResult {
     pub(crate) i_right: i32,
     /// Quality bitmask for successful fits; zero for failures. Exposed with `quality=True`.
     pub(crate) quality: u8,
+    /// Solver iterations and model evaluations for successful fits; -1 otherwise. Exposed with
+    /// `meta=True`.
+    pub(crate) n_iter: i32,
+    pub(crate) n_fev: i32,
 }
 
 fn result_with_flag(flag: f32, i_left: i32, i_right: i32) -> FitSingleSpectrumResult {
@@ -23,6 +27,8 @@ fn result_with_flag(flag: f32, i_left: i32, i_right: i32) -> FitSingleSpectrumRe
         i_left,
         i_right,
         quality: 0,
+        n_iter: -1,
+        n_fev: -1,
     }
 }
 
@@ -244,5 +250,7 @@ fn fit_prepared_spectrum_window(
         i_left: i_left as i32,
         i_right: i_right as i32,
         quality,
+        n_iter: outcome.n_iter as i32,
+        n_fev: outcome.n_fev as i32,
     }
 }

@@ -8,6 +8,10 @@ Functions
 
 .. autofunction:: gaussfit_rs.fit_spectra_batch
 
+.. autofunction:: gaussfit_rs.fit_spectra_batch_guided
+
+.. autofunction:: gaussfit_rs.fit_spectra_batch_slits
+
 .. autofunction:: gaussfit_rs.fit_gaussian_f32
 
 Result type
