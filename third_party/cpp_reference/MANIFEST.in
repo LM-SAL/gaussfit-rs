@@ -1,0 +1,3 @@
+include README.md SOURCES.json LICENSE.*
+recursive-include vendor *.cpp *.c *.h DISCLAIMER
+recursive-include diagnostic *.cpp

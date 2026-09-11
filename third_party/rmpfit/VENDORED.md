@@ -71,7 +71,8 @@ sha256sum /tmp/rmpfit-check/src/lib.rs
 
 Consumed as a path dependency, `rmpfit = { path = "third_party/rmpfit" }` in the root
 `Cargo.toml`. The sdist must ship this directory: `[tool.maturin] exclude` in `pyproject.toml`
-excludes only `third_party/c_reference/**`, and CI installs from the sdist to prove it.
+excludes only the test-only `third_party/c_reference/**` and `third_party/cpp_reference/**`, and CI
+installs from the sdist to prove it.
 Dependabot ignores path dependencies (and skips any crate named in a `[patch]` table, so that
 form buys nothing, and maturin leaves `[patch]` paths out of the sdist), so there is no
 automated notice of new rmpfit releases; check crates.io when touching dependencies. The

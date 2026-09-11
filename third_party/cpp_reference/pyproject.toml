@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=77", "numpy>=2.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gaussfit-cpp-reference"
+version = "0.1.0"
+description = "Pinned MUSE fastfit2 C++ extensions for gaussfit-rs parity tests"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["numpy>=2.0"]
+license-files = ["LICENSE.muse", "LICENSE.ftoolss", "vendor/cmpfit-1.5/DISCLAIMER"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
