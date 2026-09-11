@@ -47,39 +47,39 @@ rows with velocities within 0.41 km/s — same work, and **the C++ implementatio
 is consistently ~1.3-1.8x faster per row (≈1.5x typical)**. Numbers drift a few
 percent run to run (machine load); the earlier "parity" reading was a
 dispatch-noise artifact of 1212-row batches.
+Rerun 2026-09-11 after the workspace patch, HEAD and patched side by side: section 5 of
+[performance-plan.md](performance-plan.md). The one-thread gap is now 1.24-1.33x.
 
 ### R2 Close the per-row gap [highest-value solver item]
-Where the ~1.5x goes [inferred from code]:
-- **Precision tradeoff, deliberately chosen:** `src/gaussian.rs` runs the LM in
-  **f64** (rmpfit is f64-only; `eval`/`eval_with_derivs` convert every sample with
-  `to_f64(&self.x[i])`, `to_f64(&self.y[i])`, `to_f64(&self.error[i])`) while the
-  C++ build is `MPFIT_FLOAT` f32 end to end. So this is a precision/robustness
-  choice that costs throughput, not a slower algorithm.
-- **Allocation pattern:** rust hands rmpfit `&mut [Option<Vec<f64>>]` — a heap
-  `Vec` per parameter per Jacobian call — while the C++ batcher reuses a
-  per-thread `std::vector` workspace and `mpfit.hpp` on carlos_dev shows a
-  templated zero-heap variant.
+Where the ~1.5x goes: **measured**, in [performance-plan.md](performance-plan.md), which
+supersedes the code-level inference that used to sit here. A fit costs about 1.4 us fixed plus
+0.08 us per sample, so at the pipeline's 5-sample window three quarters of the time is per-fit
+setup and allocation; the f64 arithmetic is roughly 0.4 us. The earlier attribution of the gap to
+the C++ build's f32 precision was wrong, and an f32 LM path is off the table (section 3 there).
+Steps 1-2 of that plan (reusable Jacobian columns, a per-thread solver workspace; landed
+2026-09-11) removed every heap allocation from a fit and cut the intercept from 1.78 to 1.43 us
+without changing a bit of output; the measurements and what is left are recorded there.
 - **Evaluation cap:** rmpfit's default `max_fev = 200*(nfree+1)` = 800 for 3
   parameters is left in place (`MPConfig { ..MPConfig::new() }`,
-  `src/gaussian.rs:198-203`) where C has no cap — a silent status divergence
+  `src/gaussian.rs`) where C has no cap — a silent status divergence
   (see B3).
-Closing options, in order of expected value: (a) an f32 LM path or a specialised
-5-point solver (fixed-size loops, stack workspace); (b) remove the per-eval `Vec`
-allocation (pass slices/arrays instead); (c) fuse the post-fit `J^T J` recompute.
-Any of these must keep the one-sided parity contract (B1) and be measured with
-`benchmarks/throughput.py` **and** the C++ baseline below.
 
 ### R3 Expose per-row cost metadata [unblocks R2]
 C exposes `niter`/`nfev`/`c_time`; rust returns only the 8-column row + window.
 Add opt-in `return_meta=True` with `nfev`, `niter`, and the convergence reason per
 row; assert `nfev >= 1` and stable values on the parity corpus. Without it, R2
 cannot be attributed beyond the code-level inference above.
+Done 2026-09-11 as `meta=True` (Step 4 of [performance-plan.md](performance-plan.md)).
+Result there: Rust accepts 3-5 % more steps and evaluates 1-5 % fewer times than C++, so the
+remaining gap is cost per evaluation, not iteration count.
 
 ### R4 Accept the slit axis / strided views in the batch entry point
 Today the caller must slice per slit, which creates the 86 % staging cost on the
 muse side (`fitting_block.py:465-480`). Accepting a `(n_slit, n_wave)` Doppler
 grid plus a per-row slit index (as the C++ prototype's `fit_spectra_batch`
 already does) removes that staging inside the kernel.
+Done 2026-09-11: `fit_spectra_batch_slits` (Step 3 of
+[performance-plan.md](performance-plan.md)); the muse-side switch is a separate PR.
 
 ### R5 Specialise the 5-point fit [deferred, speculative]
 5 samples x 3 parameters: fixed-size unrolled/SIMD model and derivative loops,
