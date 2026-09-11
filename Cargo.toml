@@ -12,7 +12,6 @@ name = "gaussfit_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-num-traits = "0.2"
 numpy = "0.28"
 pyo3 = { version = "0.28", features = ["extension-module"] }
 rayon = "1"

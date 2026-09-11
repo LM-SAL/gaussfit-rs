@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from gaussfit_rs import FLAG_SUCCESS, fit_spectra_batch_guided
+from gaussfit_rs import FLAG_SUCCESS, fit_spectra_batch
 from gaussfit_rs.tests.make_c_reference import FIT_KEYS
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -28,7 +28,7 @@ def fit_fixture(ref, *, quality=False):
     bits for every row (see :data:`gaussfit_rs.QUALITY_UNCONSTRAINED` and friends).
     """
     params = {key: cast(ref[key]) for key, cast in FIT_KEYS.items()}
-    return fit_spectra_batch_guided(
+    return fit_spectra_batch(
         spectra=ref["spectra"],
         dopp_slit=ref["dopp"],
         spec_noise=ref["noise"],

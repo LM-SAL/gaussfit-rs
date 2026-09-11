@@ -37,10 +37,8 @@ const MAX_ITER_PY: isize = MAX_ITER as isize;
 #[pymodule]
 #[pyo3(name = "_gaussfit_rs")]
 fn gaussfit_rs(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(api::fit_single_spectrum, module)?)?;
-    module.add_function(wrap_pyfunction!(api::fit_gaussian_f32, module)?)?;
-    module.add_function(wrap_pyfunction!(api::fit_spectra_batch_guided, module)?)?;
-    module.add_function(wrap_pyfunction!(api::fit_spectra_batch_slits, module)?)?;
+    module.add_function(wrap_pyfunction!(api::fit_spectra_batch, module)?)?;
+    module.add_function(wrap_pyfunction!(api::fit_gaussian, module)?)?;
     module.add("FLAG_SUCCESS", FLAG_SUCCESS)?;
     module.add("FLAG_NO_LOCAL_MAX", FLAG_NO_LOCAL_MAX)?;
     module.add("FLAG_NO_CONVERGENCE", FLAG_NO_CONVERGENCE)?;

@@ -53,7 +53,7 @@ residuals, covariance and errors into the status as before, so upstream callers 
 Every value written to `fjac` is the same, in the same order: the parity corpus (92 corpora,
 38,083 rows) is bit-identical before and after. `src/gaussian.rs` keeps one workspace per thread
 in a `thread_local!`, so after the first fit on a thread a fit makes no heap allocation. Numbers
-in `docs/performance-plan.md`.
+under "Performance" in `docs/design-notes.rst`.
 
 Every local change is marked `gaussfit-rs local patch` at the patch site. Nothing else in the
 file differs from upstream; check with
@@ -71,8 +71,7 @@ sha256sum /tmp/rmpfit-check/src/lib.rs
 
 Consumed as a path dependency, `rmpfit = { path = "third_party/rmpfit" }` in the root
 `Cargo.toml`. The sdist must ship this directory: `[tool.maturin] exclude` in `pyproject.toml`
-excludes only the test-only `third_party/c_reference/**` and `third_party/cpp_reference/**`, and CI
-installs from the sdist to prove it.
+excludes only `third_party/c_reference/**`, and CI installs from the sdist to prove it.
 Dependabot ignores path dependencies (and skips any crate named in a `[patch]` table, so that
 form buys nothing, and maturin leaves `[patch]` paths out of the sdist), so there is no
 automated notice of new rmpfit releases; check crates.io when touching dependencies. The
@@ -95,7 +94,7 @@ first publish year) is unverified because the upstream host is behind an anti-bo
    patch instead and delete the patch-site comments, its paragraph above and the design-notes
    section; the regression tests decide:
    `src/tests/gaussian.rs::bound_pinned_window_matches_c_reference` and
-   `python/gaussfit_rs/tests/test_fit_gaussian.py::test_f32_bound_limited_step_does_not_stall`.
+   `python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall`.
    If upstream gains a reusable workspace of its own, drop `workspace.patch` and point
    `src/gaussian.rs` at the upstream entry point; the gate is `benchmarks/throughput.py`.
 3. Update the version, checksums and date in this file, then regenerate each patch against its own

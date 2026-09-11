@@ -32,5 +32,5 @@
   "gaussfit_rs.tests.test_figures.test_quality_per_family[muse]": "84b6706b3f98da2ade4554eddfdf2304056ce8122105c03169b10b5b145263a2",
   "gaussfit_rs.tests.test_figures.test_quality_per_family[wide]": "9f3fa273111930f648797af91fd921e99cd37fde6bc61abaf96f19f493de106e",
   "gaussfit_rs.tests.test_figures.test_parity_summary": "a91b5b83acbeed923f049add1d462f810721eb59a9688391069a34d3ed7e7825",
-  "gaussfit_rs.tests.test_figures.test_low_level_gaussian_fits": "871ac5de5b393c8e6d3e83401356d4c38a5a8f4e04c643596221cc6de0fab357"
+  "gaussfit_rs.tests.test_figures.test_low_level_gaussian_fits": "90d721648285f8538b15601772a137c335a5a25b931c71dadedfc47e047c4e6f"
 }
