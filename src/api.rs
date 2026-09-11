@@ -82,8 +82,8 @@ fn validate_spectrum_options(
 /// row `i` is fitted against `dopp_slit[slit_index[i]]` (row 0 when
 /// `slit_index` is None, which requires a single Doppler row) with guide
 /// velocity `guide_velocities[i]`. Each result row is `[amp, vel, sigma,
-/// amp_err, vel_err, sig_err, reduced_chi2, flag]`, plus the quality bits as a
-/// ninth column with `quality=True`; the second array holds the `(i_left,
+/// amp_err, vel_err, sig_err, reduced_chi2, flag, quality]`, the ninth column
+/// being the quality bits (0 for failed fits); the second array holds the `(i_left,
 /// i_right)` fit window per row and the third the solver counts `[n_iter,
 /// n_fev]` (-1 unless the fit converged). `flag` is `FLAG_SUCCESS`, `FLAG_NO_LOCAL_MAX`
 /// (no positive peak in the search window, including a non-finite guide, or
@@ -92,7 +92,7 @@ fn validate_spectrum_options(
 #[pyfunction]
 #[pyo3(signature = (spectra, dopp_slit, spec_noise, guide_velocities, velocity_range, npix,
     npix_slack, dv, width_min, amplitude_rel_min, amplitude_rel_max, width_max, width_guess,
-    slit_index=None, xtol=XTOL, ftol=FTOL, gtol=GTOL, max_iter=MAX_ITER_PY, quality=false))]
+    slit_index=None, xtol=XTOL, ftol=FTOL, gtol=GTOL, max_iter=MAX_ITER_PY))]
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn fit_spectra_batch<'py>(
     py: Python<'py>,
@@ -114,7 +114,6 @@ pub(crate) fn fit_spectra_batch<'py>(
     ftol: f32,
     gtol: f32,
     max_iter: isize,
-    quality: bool,
 ) -> PyResult<(
     Bound<'py, PyArray2<f32>>,
     Bound<'py, PyArray2<i32>>,
@@ -191,9 +190,7 @@ pub(crate) fn fit_spectra_batch<'py>(
         PyValueError::new_err("guide_velocities must be a contiguous float32 array")
     })?;
 
-    // The quality bitmask is an opt-in ninth column, so the default
-    // eight-column contract stays byte-identical for every existing caller.
-    let stride = if quality { 9 } else { 8 };
+    let stride = 9;
     let mut fit_values = vec![f32::NAN; n_spectra * stride];
     let mut idx_values = vec![0i32; n_spectra * 2];
     let mut meta_values = vec![-1i32; n_spectra * 2];
@@ -224,9 +221,7 @@ pub(crate) fn fit_spectra_batch<'py>(
                     config,
                 );
                 fit_row[..8].copy_from_slice(&result.fit_results);
-                if quality {
-                    fit_row[8] = f32::from(result.quality);
-                }
+                fit_row[8] = f32::from(result.quality);
                 idx_row[0] = result.i_left;
                 idx_row[1] = result.i_right;
                 meta_row[0] = result.n_iter;

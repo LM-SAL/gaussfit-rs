@@ -149,10 +149,10 @@ not part of the committed parity fixtures. If a future rmpfit release fixes
 until the corresponding row actually satisfies the normal gate: moving the same
 fix upstream does not by itself change that row's behavior.
 
-Opt-In Unconstrained-Fit Indicator
-----------------------------------
+Unconstrained-Fit Indicator
+---------------------------
 
-- **Status:** resolved 2026-09-11; opt-in, default off.
+- **Status:** resolved 2026-09-11; reported for every fit in the ninth result column.
 - **Owner:** Nabil Freij.
 - **Code:** ``src/spectrum.rs::fit_prepared_spectrum_window`` (the predicate),
   ``src/api.rs`` (the ``quality`` argument on the two Rust spectrum entry points) and
@@ -163,7 +163,7 @@ Current Behavior
 
 Both backends can return ``FLAG_SUCCESS`` for weakly constrained fits, including
 fits to positive noise fluctuations. Convergence does not establish a detected
-line or a reliable parameter measurement. With ``quality=True``, the spectrum
+line or a reliable parameter measurement. With the ninth result column, the spectrum
 entry points append a ninth float32 column (``fit_results[8]``, or
 ``fit_results[:, 8]`` for a batch) reporting three quality bits. Failed fits have
 zero quality bits and must be checked separately using column 7. The default

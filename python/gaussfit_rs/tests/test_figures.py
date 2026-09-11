@@ -18,7 +18,7 @@ and state the reason in the commit; ``tox -e py313-figure`` runs the same tests.
 Coverage: every ``c_reference_*`` fixture (the ``wide`` and ``muse`` parameter sets) across all
 spectrum families in them -- clean, narrow, broad, asymmetric, blend, wings, flat_top, continuum,
 poisson, white_noise, hot_pixel, masked, degenerate and low_snr -- with the fitted parameters, their
-formal errors, reduced chi-square, both flags and the opt-in unconstrained indicator printed per
+formal errors, reduced chi-square, both flags and the quality bits printed per
 panel.
 """
 
@@ -89,7 +89,7 @@ def test_fit_gallery(fixture, family):
     Up to twelve fits of one family: data, fit window, Rust against the C reference, parameters.
     """
     ref = np.load(fixture)
-    fits, indices = fit_fixture(ref, quality=True)
+    fits, indices = fit_fixture(ref)
     quality = fits[:, 8]
     dopp, velocity_range = ref["dopp"], float(ref["velocity_range"])
     rows = np.flatnonzero(ref["labels"] == family)[:PANELS]
@@ -128,7 +128,7 @@ def test_family_overview(fixture):
     One representative spectrum per family, so the whole test range is inspectable at a glance.
     """
     ref = np.load(fixture)
-    fits, indices = fit_fixture(ref, quality=True)
+    fits, indices = fit_fixture(ref)
     quality = fits[:, 8]
     dopp, velocity_range = ref["dopp"], float(ref["velocity_range"])
     families = np.unique(ref["labels"]).tolist()
@@ -170,7 +170,7 @@ def test_quality_per_family(fixture):
     How well each family is constrained: success rate, unconstrained share, velocity error, chi2.
     """
     ref = np.load(fixture)
-    fits, _ = fit_fixture(ref, quality=True)
+    fits, _ = fit_fixture(ref)
     quality = fits[:, 8].astype(int)
     families = np.unique(ref["labels"]).tolist()
     solved = fits[:, 7] == FLAG_SUCCESS

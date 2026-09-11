@@ -16,8 +16,8 @@ const FLAG_NO_LOCAL_MAX: f32 = 1.0;
 /// Fit-status flag: LM optimiser did not converge within `max_iter` iterations.
 const FLAG_NO_CONVERGENCE: f32 = 2.0;
 
-// Opt-in quality bits, reported in the ninth result column when `quality=True`
-// (see "Opt-In Unconstrained-Fit Indicator" in docs/design-notes.rst). A
+// Quality bits, reported in the ninth result column
+// (see "Unconstrained-Fit Indicator" in docs/design-notes.rst). A
 // consumer that wants the permissive "any of them" answer tests `!= 0`.
 /// Quality bit: a parameter's error is not smaller than the velocity or width interval it was
 /// bounded to, so that parameter is not constrained by the data.
