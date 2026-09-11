@@ -46,7 +46,6 @@ dependencies = [
  "numpy",
  "pyo3",
  "rayon",
- "rmpfit",
 ]
 
 [[package]]
