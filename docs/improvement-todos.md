@@ -128,27 +128,19 @@ chi2 ~1e-13, amplitude ~5e-5 ("nothing there" spectra fitted exactly) — and bo
 backends return FLAG_SUCCESS with finite parameters there. Both values are zero
 to any consumer, so rust's 0 carries **no regression risk**, and the earlier
 "rust is worse / match C's fallback" framing in this document was wrong.
-Mechanism [measured and reproduced in isolation]: the error pass normalises the
-window and its noise by the peak (`spectrum.rs:140-141`), so the Hessian
-determinant scales as `peak^6`, while the guard is **absolute**
-(`|det| < 1e-30 -> [0, 0, 0]`, `gaussian.rs:283`). Sweeping a noiseless synthetic
-line by peak magnitude reproduces the discontinuity exactly: rust is 0 at peak
-5.7e-5 and non-zero from 5.7e-4 upward. C's fallback fires at a different scale
-(it returns 0 at peak 5.7), so **neither implementation is scale-invariant**.
+Mechanism [measured]: the error pass normalises the window and its noise by the
+peak (`spectrum.rs:140-141`), so the determinant scales as `peak^6`; computing
+`det(J^T J)` at the fitted parameters for the reproduced case gives 6.495e-33 at
+peak 5.7e-5 and 6.495e-27 at 5.7e-4, against the **absolute** guard
+`|det| < 1e-30 -> [0, 0, 0]` (`gaussian.rs:281`). The threshold crossing lands
+exactly where rust's zeros start (0 at 5.7e-5, non-zero from 5.7e-4 upward), so
+the guard is confirmed rather than inferred. C's fallback fires at a different
+scale (it returns 0 at peak 5.7), so **neither implementation is scale-invariant**.
 Improvement worth considering (new, beyond the original plan): make the guard
 relative — compare `det` against the product of the diagonal terms — so
 tiny-amplitude fits are treated like any other. That is a behaviour change needing
 the parity corpus and a decision, but it would remove the only place where rust
 reports a physically impossible "exactly 0" uncertainty.
-
-### B5 Unconstrained fits are reported as successes [decision needed]
-8-9 % of pixels (10,876 in `mom_gt_noise`, 11,382 in `mom_gfat`, 7,796 in
-`mom_inv`) carry a median `error_velocity` of 200-244 km/s, yet **both** backends
-return FLAG_SUCCESS and the pipeline propagates them into the moments and area
-statistics (the amplitude there is 2.6-3.6 against 17.8-18.9 overall). Decide
-whether to add an opt-in "unconstrained fit" indicator — error/value ratio,
-`error > width_max`, or an amplitude-significance test — as an extra column, so
-consumers can mask them without breaking the 8-column parity contract.
 
 ### B4 `lmpar` `max(paru)` deviation — **patched** 2026-09-11
 Fix applied: `third_party/rmpfit/src/lib.rs` now clamps with
@@ -191,6 +183,15 @@ anywhere is 4e-4). About two thirds of the changed pixels move *closer* to C
 are hundreds of km/s. The "68 of 82,368 corpus fits move onto C's values" figure above is the
 100-seed corpus measurement, not this pipeline data.
 Still worth doing: report the deviation upstream (it exists in released rmpfit).
+
+### B5 Unconstrained fits are reported as successes [decision needed]
+8-9 % of pixels (10,876 in `mom_gt_noise`, 11,382 in `mom_gfat`, 7,796 in
+`mom_inv`) carry a median `error_velocity` of 200-244 km/s, yet **both** backends
+return FLAG_SUCCESS and the pipeline propagates them into the moments and area
+statistics (the amplitude there is 2.6-3.6 against 17.8-18.9 overall). Decide
+whether to add an opt-in "unconstrained fit" indicator — error/value ratio,
+`error > width_max`, or an amplitude-significance test — as an extra column, so
+consumers can mask them without breaking the 8-column parity contract.
 
 ## 4. The carlos_dev C++ prototype: faster per row, still not worth adopting
 
