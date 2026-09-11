@@ -19,26 +19,14 @@ Result type
 Constants
 ---------
 
-.. py:data:: gaussfit_rs.FLAG_SUCCESS
-   :value: 0.0
+Fit status, column 7 of every result row:
 
-   Fit converged successfully.
+.. autodata:: gaussfit_rs.FLAG_SUCCESS
+.. autodata:: gaussfit_rs.FLAG_NO_LOCAL_MAX
+.. autodata:: gaussfit_rs.FLAG_NO_CONVERGENCE
 
-.. py:data:: gaussfit_rs.FLAG_NO_LOCAL_MAX
-   :value: 1.0
+Quality bits, summed in column 8 of converged spectrum fits:
 
-   No spectral peak found within the search window.
-
-.. py:data:: gaussfit_rs.FLAG_NO_CONVERGENCE
-   :value: 2.0
-
-   LM optimiser did not converge within ``max_iter`` iterations.
-
-.. py:data:: gaussfit_rs.QUALITY_UNCONSTRAINED
-   :value: 1
-
-.. py:data:: gaussfit_rs.QUALITY_ZERO_ERROR
-   :value: 2
-
-.. py:data:: gaussfit_rs.QUALITY_PEGGED
-   :value: 4
+.. autodata:: gaussfit_rs.QUALITY_UNCONSTRAINED
+.. autodata:: gaussfit_rs.QUALITY_ZERO_ERROR
+.. autodata:: gaussfit_rs.QUALITY_PEGGED
