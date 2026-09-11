@@ -117,15 +117,38 @@ rmpfit's 800-evaluation cap (R2) can trigger where C is uncapped. Both are silen
 divergences visible in `FLAGS`; document them (the parity corpus peaks near 202
 evaluations, so neither binds there).
 
-### B3 Error fields on degenerate fits — one case where rust is worse
-Measured over 631,897 pixels: same estimator both backends
-(`sqrt(cofactor/det(J^T J)) * sqrt(chi2/dof)`, `mpfit.c:2611` vs
-`src/gaussian.rs:251-299`), agreement <=1e-4 for **91.7 %** of pixels (<=1e-3 for
-98.3 %), and **rust returns exactly zero error on 8,790 pixels (1.39 %) where C
-is non-zero** — rust bails to zeros when `|det| <= 1e-30`, C falls through to a
-scaled Gauss-Jordan inverse. A zero uncertainty on a degenerate fit is worse than
-C's value: either match C's fallback or add an explicit "unconstrained" column so
-parity tests keep passing.
+### B3 Error fields: agreement, and an absolute near-singular guard — no regression risk
+Same estimator in both backends (`sqrt(cofactor/det(J^T J)) * sqrt(chi2/dof)`,
+`mpfit.c:2611` vs `src/gaussian.rs:251-299`) with the same `dof = n - 3` clamp.
+Over 631,897 real pixels they agree within 1e-4 for 91.7 % and within 1e-3 for
+98.3 %; every difference is at the float32 noise floor except one case: on 8,790
+pixels (1.39 %, 8,753 of them in `mom_guide`) rust reports exactly 0 where C
+reports 1e-10..3e-5. Those are **trivial fits, not degenerate ones** — reduced
+chi2 ~1e-13, amplitude ~5e-5 ("nothing there" spectra fitted exactly) — and both
+backends return FLAG_SUCCESS with finite parameters there. Both values are zero
+to any consumer, so rust's 0 carries **no regression risk**, and the earlier
+"rust is worse / match C's fallback" framing in this document was wrong.
+Mechanism [measured and reproduced in isolation]: the error pass normalises the
+window and its noise by the peak (`spectrum.rs:140-141`), so the Hessian
+determinant scales as `peak^6`, while the guard is **absolute**
+(`|det| < 1e-30 -> [0, 0, 0]`, `gaussian.rs:283`). Sweeping a noiseless synthetic
+line by peak magnitude reproduces the discontinuity exactly: rust is 0 at peak
+5.7e-5 and non-zero from 5.7e-4 upward. C's fallback fires at a different scale
+(it returns 0 at peak 5.7), so **neither implementation is scale-invariant**.
+Improvement worth considering (new, beyond the original plan): make the guard
+relative — compare `det` against the product of the diagonal terms — so
+tiny-amplitude fits are treated like any other. That is a behaviour change needing
+the parity corpus and a decision, but it would remove the only place where rust
+reports a physically impossible "exactly 0" uncertainty.
+
+### B5 Unconstrained fits are reported as successes [decision needed]
+8-9 % of pixels (10,876 in `mom_gt_noise`, 11,382 in `mom_gfat`, 7,796 in
+`mom_inv`) carry a median `error_velocity` of 200-244 km/s, yet **both** backends
+return FLAG_SUCCESS and the pipeline propagates them into the moments and area
+statistics (the amplitude there is 2.6-3.6 against 17.8-18.9 overall). Decide
+whether to add an opt-in "unconstrained fit" indicator — error/value ratio,
+`error > width_max`, or an amplitude-significance test — as an extra column, so
+consumers can mask them without breaking the 8-column parity contract.
 
 ### B4 `lmpar` `max(paru)` deviation — **patched** 2026-09-11
 Fix applied: `third_party/rmpfit/src/lib.rs` now clamps with
@@ -191,6 +214,9 @@ R2's precision/allocation findings and R5's ideas, plus its Python layer's
   attributable to the deliberate f64 LM and per-eval allocation (R2).
 - **For pipeline impact: yes.** The solve is 0.90 % of GFAT, so even a 1.5x
   kernel win moves a full run by ~0.3 %. 86 % of GFAT is caller-side staging (M1).
-- **Quality: ahead on stalls, behind on one edge case.** 0 stuck windows vs C
-  f32's 13 (worst 2739x) and no hangs on NaN inputs, but zeroes the error where C
-  does not (B3).
+- **Quality: ahead, with one open improvement.** 0 stuck windows vs C f32's 13
+  (worst 2739x) and no hangs on NaN inputs. The only place rust and C differ
+  elsewhere is an absolute `|det| < 1e-30` guard that zeroes the error field on
+  tiny-amplitude fits (B3): no regression risk, but making the guard relative
+  would remove a physically impossible "exactly 0" uncertainty. The separate
+  open decision is whether to flag genuinely unconstrained fits (B5).
