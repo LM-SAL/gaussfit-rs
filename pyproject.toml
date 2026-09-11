@@ -49,10 +49,9 @@ Documentation = "https://gaussfit-rs.readthedocs.io"
 python-source = "python"
 module-name = "gaussfit_rs._gaussfit_rs"
 # Keep the sdist to what a build needs: the patched rmpfit under third_party/ is a Cargo path
-# dependency and must ship; the C and C++ references are test-only and carry their own licenses.
+# dependency and must ship; the C reference is test-only and carries its own licenses.
 exclude = [
   "third_party/c_reference/**",
-  "third_party/cpp_reference/**",
   "benchmarks/**",
   "docs/**",
   ".circleci/**",
