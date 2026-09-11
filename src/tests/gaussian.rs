@@ -1,4 +1,4 @@
-use crate::gaussian::{fit_gaussian_bounded_with_config, FitConfig};
+use crate::gaussian::{fit_gaussian_bounded, FitConfig};
 
 #[test]
 fn fits_simple_gaussian() {
@@ -12,7 +12,7 @@ fn fits_simple_gaussian() {
     ];
     let err = [0.1; 5];
 
-    let outcome = fit_gaussian_bounded_with_config(
+    let outcome = fit_gaussian_bounded(
         &x,
         &y,
         &err,
@@ -39,7 +39,7 @@ fn rejects_non_positive_sigma_lower_bound() {
     ];
     let err = [0.1; 5];
 
-    let outcome = fit_gaussian_bounded_with_config(
+    let outcome = fit_gaussian_bounded(
         &x,
         &y,
         &err,
@@ -49,33 +49,6 @@ fn rejects_non_positive_sigma_lower_bound() {
     );
 
     assert!(outcome.is_none());
-}
-
-#[test]
-fn fits_simple_gaussian_f64() {
-    let x: [f64; 5] = [-2.0, -1.0, 0.0, 1.0, 2.0];
-    let y: [f64; 5] = [
-        (-0.5_f64 * 4.0).exp(),
-        (-0.5_f64).exp(),
-        1.0,
-        (-0.5_f64).exp(),
-        (-0.5_f64 * 4.0).exp(),
-    ];
-    let err = [0.1_f64; 5];
-
-    let outcome = fit_gaussian_bounded_with_config::<f64>(
-        &x,
-        &y,
-        &err,
-        [0.9, 0.1, 0.8],
-        [[0.1, 2.0], [-2.0, 2.0], [0.2, 2.0]],
-        FitConfig::<f64>::default(),
-    )
-    .expect("f64 fit should converge");
-
-    assert!((outcome.params[0] - 1.0).abs() < 1.0e-6);
-    assert!(outcome.params[1].abs() < 1.0e-6);
-    assert!((outcome.params[2] - 1.0).abs() < 1.0e-6);
 }
 
 #[test]
@@ -105,13 +78,13 @@ fn bound_pinned_window_matches_c_reference() {
     ];
     let error = [0.03133689; 11];
 
-    let outcome = fit_gaussian_bounded_with_config(
+    let outcome = fit_gaussian_bounded(
         &x,
         &y,
         &error,
         [1.0, -188.13559, 30.0],
         [[0.1, 2.0], [-238.98305, -137.28813], [5.0, 200.0]],
-        FitConfig::<f32>::default(),
+        FitConfig::default(),
     )
     .expect("fit should converge");
 

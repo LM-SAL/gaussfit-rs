@@ -1,5 +1,5 @@
 """
-Tests for fit_single_spectrum and fit_spectra_batch.
+Tests for fit_spectra_batch and fit_single_spectrum.
 """
 
 import numpy as np
@@ -14,13 +14,10 @@ from gaussfit_rs import (
     FitResult,
     fit_single_spectrum,
     fit_spectra_batch,
-    fit_spectra_batch_guided,
-    fit_spectra_batch_slits,
 )
 
 SIGMA_TRUE = 30.0  # km/s
 COMMON_KW = {
-    "guide_velocity": 0.0,
     "velocity_range": 200.0,
     "npix": 10,
     "npix_slack": 2,
@@ -41,6 +38,16 @@ def _make_spectrum(amp=1.0, vel=0.0, sigma=SIGMA_TRUE, noise=0.05, n=60):
     return v, spec, err
 
 
+def _single(spec, v, err, guide=0.0, **overrides):
+    return fit_single_spectrum(
+        spectrum=spec,
+        dopp_slit=v,
+        spec_noise=err,
+        guide_velocity=guide,
+        **{**COMMON_KW, **overrides},
+    )
+
+
 @pytest.fixture
 def batch_data():
     rng = np.random.default_rng(42)
@@ -59,106 +66,49 @@ def batch_data():
 
 
 def test_single_recovers_gaussian():
-    v, spec, err = _make_spectrum(noise=0.02)
-    r, (il, ir) = fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, **COMMON_KW)
+    v, spec, err = _make_spectrum(amp=2.0, vel=15.0)
+    r, (il, ir) = _single(spec, v, err)
+    assert r.shape == (8,)
+    assert r.dtype == np.float32
     assert r[7] == FLAG_SUCCESS
-    assert abs(r[1]) < 5.0, f"velocity {r[1]} km/s off by >5"
-    assert abs(r[2] - SIGMA_TRUE) < 5.0, f"sigma {r[2]} off by >5"
-    assert il < ir
-
-
-def test_single_fit_result_namedtuple():
-    v, spec, err = _make_spectrum(noise=0.02)
-    r_arr, _ = fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, **COMMON_KW)
-    fr = FitResult.from_array(r_arr)
-    assert fr.converged
-    assert isinstance(fr.velocity, float)
+    assert abs(r[0] - 2.0) < 0.1
+    assert abs(r[1] - 15.0) < 2.0
+    assert abs(r[2] - SIGMA_TRUE) < 3.0
+    assert 0 <= il < ir <= v.size
 
 
 def test_single_no_local_max_outside_window():
-    v, spec, err = _make_spectrum(vel=0.0, noise=0.02)
-    r, _ = fit_single_spectrum(
-        spectrum=spec,
-        dopp_slit=v,
-        spec_noise=err,
-        **{**COMMON_KW, "guide_velocity": 290.0, "velocity_range": 5.0},
-    )
+    v, spec, err = _make_spectrum(vel=0.0)
+    r, window = _single(spec, v, err, guide=250.0, velocity_range=10.0)
     assert r[7] == FLAG_NO_LOCAL_MAX
+    assert np.isnan(r[:7]).all()
+    assert window == (0, 0)
 
 
-def test_single_output_shape():
+def test_single_accepts_non_contiguous_and_float64_inputs():
     v, spec, err = _make_spectrum()
-    r, idx = fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, **COMMON_KW)
-    assert r.shape == (8,)
-    assert len(idx) == 2
+    wide = np.stack([spec, spec]).astype(np.float64)
+    r, _ = _single(wide[:, ::1][0], v.astype(np.float64), err[::1])
+    r_strided, _ = _single(np.repeat(spec, 2)[::2], v, np.repeat(err, 2)[::2])
+    assert r[7] == FLAG_SUCCESS
+    np.testing.assert_array_equal(r, r_strided)
 
 
-def test_single_n_pixels_parameter():
-    v, spec, err = _make_spectrum()
-    r40, _ = fit_single_spectrum(
-        spectrum=spec, dopp_slit=v, spec_noise=err, n_pixels=40, **COMMON_KW
-    )
-    assert r40[7] in (FLAG_SUCCESS, FLAG_NO_LOCAL_MAX)
-
-
-def test_single_non_contiguous_arrays():
-    v, spec, err = _make_spectrum(noise=0.02)
-    r, _ = fit_single_spectrum(
-        spectrum=spec[::-1].copy()[::-1],  # non-contiguous
-        dopp_slit=v,
-        spec_noise=err,
-        **COMMON_KW,
-    )
-    assert r[7] in (FLAG_SUCCESS, FLAG_NO_LOCAL_MAX)
-
-
-def test_single_raises_on_zero_n_pixels():
-    v, spec, err = _make_spectrum()
-    with pytest.raises(ValueError, match="n_pixels must be positive"):
-        fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, n_pixels=0, **COMMON_KW)
-
-
-def test_single_raises_on_negative_n_pixels():
-    v, spec, err = _make_spectrum()
-    with pytest.raises(ValueError, match="n_pixels must be positive"):
-        fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, n_pixels=-1, **COMMON_KW)
-
-
-def test_single_rejects_invalid_fit_parameters():
+def test_single_rejects_invalid_options():
     v, spec, err = _make_spectrum()
     with pytest.raises(ValueError, match="finite"):
-        fit_single_spectrum(
-            spectrum=spec,
-            dopp_slit=v,
-            spec_noise=err,
-            **{**COMMON_KW, "width_min": np.nan},
-        )
+        _single(spec, v, err, width_min=np.nan)
     with pytest.raises(ValueError, match="amplitude_rel_min"):
-        fit_single_spectrum(
-            spectrum=spec,
-            dopp_slit=v,
-            spec_noise=err,
-            **{**COMMON_KW, "amplitude_rel_min": 2.0, "amplitude_rel_max": 1.0},
-        )
+        _single(spec, v, err, amplitude_rel_min=2.0, amplitude_rel_max=1.0)
+    with pytest.raises(ValueError, match="xtol"):
+        _single(spec, v, err, xtol=np.nan)
+    with pytest.raises(ValueError, match="max_iter"):
+        _single(spec, v, err, max_iter=0)
 
 
-def test_single_large_window_uses_heap_fallback():
-    n = 700
-    v = np.linspace(-350.0, 349.0, n, dtype=np.float32)
-    spec = np.exp(-0.5 * (v / SIGMA_TRUE) ** 2).astype(np.float32)
-    err = np.full(n, 0.01, dtype=np.float32)
-    r, (il, ir) = fit_single_spectrum(
-        spectrum=spec,
-        dopp_slit=v,
-        spec_noise=err,
-        **{
-            **COMMON_KW,
-            "npix": 300,
-            "npix_slack": 0,
-            "dv": 1.0,
-            "velocity_range": 50.0,
-        },
-    )
+def test_single_large_window_fits():
+    v, spec, err = _make_spectrum(n=700)
+    r, (il, ir) = _single(spec, v, err, npix=300, npix_slack=0, dv=1.0, velocity_range=50.0)
     assert ir - il > 512
     assert r[7] == FLAG_SUCCESS
 
@@ -168,53 +118,31 @@ def test_batch_output_shapes(batch_data):
         spectra=batch_data["spectra"],
         dopp_slit=batch_data["v"],
         spec_noise=batch_data["noise"],
+        guide_velocities=0.0,
         **COMMON_KW,
     )
     assert fits.shape == (batch_data["n"], 8)
     assert idx.shape == (batch_data["n"], 2)
     assert fits.dtype == np.float32
     assert idx.dtype == np.int32
+    assert np.all(fits[:, 7] == FLAG_SUCCESS)
 
 
 def test_batch_matches_single_spectrum(batch_data):
+    guide_velocities = np.linspace(-15.0, 15.0, batch_data["n"], dtype=np.float32)
     fits, indices = fit_spectra_batch(
         spectra=batch_data["spectra"],
         dopp_slit=batch_data["v"],
         spec_noise=batch_data["noise"],
+        guide_velocities=guide_velocities,
         **COMMON_KW,
     )
     for i in range(10):
-        r_single, (il, ir) = fit_single_spectrum(
-            spectrum=batch_data["spectra"][i],
-            dopp_slit=batch_data["v"],
-            spec_noise=batch_data["noise"][i],
-            **COMMON_KW,
+        r_single, (il, ir) = _single(
+            batch_data["spectra"][i], batch_data["v"], batch_data["noise"][i], guide_velocities[i]
         )
         np.testing.assert_array_equal(fits[i], r_single, err_msg=f"row {i} mismatch")
-        assert indices[i, 0] == il
-        assert indices[i, 1] == ir
-
-
-def test_guided_batch_matches_single_spectrum(batch_data):
-    guide_velocities = np.linspace(-15.0, 15.0, batch_data["n"], dtype=np.float32)
-    batch_kw = {key: value for key, value in COMMON_KW.items() if key != "guide_velocity"}
-    fits, indices = fit_spectra_batch_guided(
-        spectra=batch_data["spectra"],
-        dopp_slit=batch_data["v"],
-        spec_noise=batch_data["noise"],
-        guide_velocities=guide_velocities,
-        **batch_kw,
-    )
-    for i in range(10):
-        r_single, (il, ir) = fit_single_spectrum(
-            spectrum=batch_data["spectra"][i],
-            dopp_slit=batch_data["v"],
-            spec_noise=batch_data["noise"][i],
-            **{**COMMON_KW, "guide_velocity": float(guide_velocities[i])},
-        )
-        np.testing.assert_array_equal(fits[i], r_single, err_msg=f"row {i} mismatch")
-        assert indices[i, 0] == il
-        assert indices[i, 1] == ir
+        assert (indices[i, 0], indices[i, 1]) == (il, ir)
 
 
 def _slit_grids(v):
@@ -222,51 +150,20 @@ def _slit_grids(v):
     return np.stack([v - 20.0, v, v + 20.0]).astype(np.float32)
 
 
-def test_slits_batch_with_constant_index_matches_guided(batch_data):
-    n = batch_data["n"]
-    dopp = _slit_grids(batch_data["v"])
-    guide_velocities = np.linspace(-15.0, 15.0, n, dtype=np.float32)
-    batch_kw = {key: value for key, value in COMMON_KW.items() if key != "guide_velocity"}
-    for slit in range(len(dopp)):
-        expected = fit_spectra_batch_guided(
-            spectra=batch_data["spectra"],
-            dopp_slit=dopp[slit],
-            spec_noise=batch_data["noise"],
-            guide_velocities=guide_velocities,
-            **batch_kw,
-        )
-        actual = fit_spectra_batch_slits(
-            spectra=batch_data["spectra"],
-            dopp_slit=dopp,
-            spec_noise=batch_data["noise"],
-            guide_velocities=guide_velocities,
-            slit_index=np.full(n, slit, dtype=np.int32),
-            **batch_kw,
-        )
-        for got, want in zip(actual, expected, strict=True):
-            np.testing.assert_array_equal(got, want, err_msg=f"slit {slit}")
-
-
-def test_slits_batch_routes_each_row_to_its_slit(batch_data):
+def test_slit_table_routes_each_row_to_its_slit(batch_data):
     dopp = _slit_grids(batch_data["v"])
     slit_index = (np.arange(batch_data["n"]) % len(dopp)).astype(np.int32)
-    guide_velocities = np.zeros(batch_data["n"], dtype=np.float32)
-    batch_kw = {key: value for key, value in COMMON_KW.items() if key != "guide_velocity"}
-    fits, indices = fit_spectra_batch_slits(
+    fits, indices = fit_spectra_batch(
         spectra=batch_data["spectra"],
         dopp_slit=dopp,
         spec_noise=batch_data["noise"],
-        guide_velocities=guide_velocities,
+        guide_velocities=0.0,
         slit_index=slit_index,
-        **batch_kw,
+        **COMMON_KW,
     )
-    assert fits.shape == (batch_data["n"], 8)
     for i in range(10):
-        r_single, (il, ir) = fit_single_spectrum(
-            spectrum=batch_data["spectra"][i],
-            dopp_slit=dopp[slit_index[i]],
-            spec_noise=batch_data["noise"][i],
-            **COMMON_KW,
+        r_single, (il, ir) = _single(
+            batch_data["spectra"][i], dopp[slit_index[i]], batch_data["noise"][i]
         )
         np.testing.assert_array_equal(fits[i], r_single, err_msg=f"row {i} mismatch")
         assert (indices[i, 0], indices[i, 1]) == (il, ir)
@@ -278,129 +175,54 @@ def test_slits_batch_routes_each_row_to_its_slit(batch_data):
 
 
 @pytest.mark.parametrize(
-    ("slit_index", "dopp_rows", "match"),
+    ("override", "match"),
     [
-        (np.array([0, 3], dtype=np.int32), 3, r"slit_index values"),
-        (np.array([0, -1], dtype=np.int32), 3, r"slit_index values"),
-        (np.array([0], dtype=np.int32), 3, r"slit_index length"),
-        (np.array([0, 0], dtype=np.int32), 1, r"2-D"),
+        ({"spectra": "1d"}, r"2-D"),
+        ({"spec_noise": "short"}, r"spec_noise shape"),
+        ({"dopp_slit": "short"}, r"dopp_slit columns"),
+        ({"guide_velocities": np.zeros(3, dtype=np.float32)}, r"guide_velocities length"),
+        ({"dopp_slit": "table"}, r"slit_index is required"),
+        ({"dopp_slit": "table", "slit_index": [0, 3]}, r"slit_index values"),
+        ({"dopp_slit": "table", "slit_index": [0, -1]}, r"slit_index values"),
+        ({"dopp_slit": "table", "slit_index": [0]}, r"slit_index length"),
     ],
 )
-def test_slits_batch_validates_index_and_grid(slit_index, dopp_rows, match):
+def test_batch_validates_shapes(override, match):
     v, spec, err = _make_spectrum()
-    dopp = _slit_grids(v)[:dopp_rows] if dopp_rows > 1 else v
-    batch_kw = {key: value for key, value in COMMON_KW.items() if key != "guide_velocity"}
+    kwargs = {
+        "spectra": np.stack([spec, spec]),
+        "dopp_slit": v,
+        "spec_noise": np.stack([err, err]),
+        "guide_velocities": 0.0,
+        **COMMON_KW,
+    }
+    for key, value in override.items():
+        if not isinstance(value, str):
+            kwargs[key] = value
+        elif value == "1d":
+            kwargs[key] = spec
+        elif value == "short":
+            kwargs[key] = kwargs[key][..., :50]
+        else:
+            kwargs[key] = _slit_grids(v)
     with pytest.raises(ValueError, match=match):
-        fit_spectra_batch_slits(
-            spectra=np.stack([spec, spec]),
-            dopp_slit=dopp,
-            spec_noise=np.stack([err, err]),
-            guide_velocities=np.zeros(2, dtype=np.float32),
-            slit_index=slit_index,
-            **batch_kw,
-        )
-
-
-def test_meta_counts_are_opt_in_and_match_between_entry_points(batch_data):
-    v, spec, err = _make_spectrum()
-    r, _window, counts = fit_single_spectrum(
-        spectrum=spec, dopp_slit=v, spec_noise=err, meta=True, **COMMON_KW
-    )
-    assert r[7] == FLAG_SUCCESS
-    assert counts.dtype == np.int32
-    assert counts.shape == (2,)
-    assert counts[1] >= counts[0] >= 1
-    assert len(fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, **COMMON_KW)) == 2
-    _, _, failed = fit_single_spectrum(
-        spectrum=spec,
-        dopp_slit=v,
-        spec_noise=err,
-        meta=True,
-        **{**COMMON_KW, "guide_velocity": np.nan},
-    )
-    np.testing.assert_array_equal(failed, [-1, -1])
-
-    fits, _, batch_counts = fit_spectra_batch(
-        spectra=batch_data["spectra"],
-        dopp_slit=batch_data["v"],
-        spec_noise=batch_data["noise"],
-        meta=True,
-        **COMMON_KW,
-    )
-    assert batch_counts.shape == (batch_data["n"], 2)
-    assert (batch_counts[fits[:, 7] == FLAG_SUCCESS] >= 1).all()
-    for i in range(5):
-        _, _, single = fit_single_spectrum(
-            spectrum=batch_data["spectra"][i],
-            dopp_slit=batch_data["v"],
-            spec_noise=batch_data["noise"][i],
-            meta=True,
-            **COMMON_KW,
-        )
-        np.testing.assert_array_equal(batch_counts[i], single, err_msg=f"row {i}")
-
-
-def test_batch_all_converge_on_clean_data(batch_data):
-    n = 100
-    spectra = np.stack(
-        [np.exp(-0.5 * (batch_data["v"] / SIGMA_TRUE) ** 2).astype(np.float32) for _ in range(n)]
-    )
-    noise = np.full((n, 60), 0.01, dtype=np.float32)
-    fits, _ = fit_spectra_batch(
-        spectra=spectra, dopp_slit=batch_data["v"], spec_noise=noise, **COMMON_KW
-    )
-    assert np.all(fits[:, 7] == FLAG_SUCCESS)
-
-
-def test_batch_n_pixels_limits_columns(batch_data):
-    fits, _ = fit_spectra_batch(
-        spectra=batch_data["spectra"],
-        dopp_slit=batch_data["v"],
-        spec_noise=batch_data["noise"],
-        n_pixels=40,
-        **COMMON_KW,
-    )
-    assert fits.shape == (batch_data["n"], 8)
-
-
-def test_batch_raises_on_1d_spectra(batch_data):
-    with pytest.raises(ValueError, match="2-D"):
-        fit_spectra_batch(
-            spectra=batch_data["spectra"][0],
-            dopp_slit=batch_data["v"],
-            spec_noise=batch_data["noise"],
-            **COMMON_KW,
-        )
-
-
-def test_batch_requires_exact_noise_shape(batch_data):
-    with pytest.raises(ValueError, match="spec_noise shape"):
-        fit_spectra_batch(
-            spectra=batch_data["spectra"],
-            dopp_slit=batch_data["v"],
-            spec_noise=batch_data["noise"][:, :50],
-            n_pixels=50,
-            **COMMON_KW,
-        )
+        fit_spectra_batch(**kwargs)
 
 
 @pytest.mark.parametrize("guide", [np.nan, np.inf, -np.inf])
 def test_nonfinite_guide_reports_no_local_max(guide):
     # Matches the C extension: a nonfinite guide matches no pixel, so no peak is found.
     v, spec, err = _make_spectrum()
-    r, window = fit_single_spectrum(
-        spectrum=spec, dopp_slit=v, spec_noise=err, **{**COMMON_KW, "guide_velocity": guide}
-    )
+    r, window = _single(spec, v, err, guide=guide)
     assert r[7] == FLAG_NO_LOCAL_MAX
     assert np.isnan(r[:7]).all()
     assert window == (0, 0)
-    batch_kw = {k: val for k, val in COMMON_KW.items() if k != "guide_velocity"}
-    fits, idx = fit_spectra_batch_guided(
+    fits, idx = fit_spectra_batch(
         spectra=np.stack([spec, spec]),
         dopp_slit=v,
         spec_noise=np.stack([err, err]),
         guide_velocities=np.array([guide, 0.0], dtype=np.float32),
-        **batch_kw,
+        **COMMON_KW,
     )
     assert fits[0, 7] == FLAG_NO_LOCAL_MAX
     assert fits[1, 7] == FLAG_SUCCESS
@@ -413,12 +235,7 @@ def test_quality_bits_are_opt_in_and_report_unconstrained_successes():
     """
     v, spec, err = _make_spectrum(amp=1.0, noise=0.05)
 
-    plain = fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, **COMMON_KW)
-    assert len(plain) == 2  # opt-in: the default arity is unchanged
-
-    fits = fit_single_spectrum(
-        spectrum=spec, dopp_slit=v, spec_noise=err, quality=True, **COMMON_KW
-    )[0]
+    fits = _single(spec, v, err, quality=True)[0]
     assert fits.shape == (9,)
     assert fits[7] == FLAG_SUCCESS
     assert fits[8] == 0  # a real line constrains its parameters
@@ -428,18 +245,14 @@ def test_quality_bits_are_opt_in_and_report_unconstrained_successes():
     checker = np.where(np.arange(v.size) % 2 == 0, 3.0, -3.0)
     faint = (0.5 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2) + checker).astype(np.float32)
     faint_err = np.full(v.size, 3.0, dtype=np.float32)
-    fits_u = fit_single_spectrum(
-        spectrum=faint, dopp_slit=v, spec_noise=faint_err, quality=True, **COMMON_KW
-    )[0]
+    fits_u = _single(faint, v, faint_err, quality=True)[0]
     assert fits_u[7] == FLAG_SUCCESS
     assert fits_u[4] >= 2.0 * COMMON_KW["dv"] * COMMON_KW["npix"]
     assert int(fits_u[8]) & QUALITY_UNCONSTRAINED
 
     # Failed fits are reported by the result flag, not the indicator.
     flat = np.full(v.size, -1.0, dtype=np.float32)
-    fits_f = fit_single_spectrum(
-        spectrum=flat, dopp_slit=v, spec_noise=err, quality=True, **COMMON_KW
-    )[0]
+    fits_f = _single(flat, v, err, quality=True)[0]
     assert fits_f[7] == FLAG_NO_LOCAL_MAX
     assert fits_f[8] == 0  # failed fits carry no indicator
 
@@ -456,13 +269,12 @@ def test_batch_quality_bits_match_the_documented_criterion():
     tiny = (1.0e-6 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2)).astype(np.float32)
     spectra = np.stack([spec, noisy, tiny])
     noises = np.stack([err, np.full(v.size, 3.0, dtype=np.float32), err])
+    kwargs = {"spectra": spectra, "dopp_slit": v, "spec_noise": noises, "guide_velocities": 0.0}
 
-    plain = fit_spectra_batch(spectra=spectra, dopp_slit=v, spec_noise=noises, **COMMON_KW)
-    assert len(plain) == 2
+    plain, _ = fit_spectra_batch(**kwargs, **COMMON_KW)
+    assert plain.shape[1] == 8
 
-    fits, indices = fit_spectra_batch(
-        spectra=spectra, dopp_slit=v, spec_noise=noises, quality=True, **COMMON_KW
-    )
+    fits, indices = fit_spectra_batch(**kwargs, quality=True, **COMMON_KW)
     flags = fits[:, 8]
     assert fits.shape[1] == 9
     assert flags.dtype == np.float32
@@ -484,3 +296,40 @@ def test_batch_quality_bits_match_the_documented_criterion():
         | (QUALITY_ZERO_ERROR * (fits[:, 3:6] == 0).any(axis=1))
     ).astype(np.float32)
     assert np.array_equal(flags % QUALITY_PEGGED, derived % QUALITY_PEGGED)
+
+
+def test_fit_result_named_tuple():
+    v, spec, err = _make_spectrum(amp=2.0)
+    row, _ = _single(spec, v, err, quality=True)
+    result = FitResult.from_array(row)
+    assert result.converged
+    assert abs(result.amplitude - 2.0) < 0.1
+    assert result.flag == FLAG_SUCCESS
+
+
+def test_meta_counts_are_opt_in_and_match_between_entry_points(batch_data):
+    v, spec, err = _make_spectrum()
+    r, _window, counts = _single(spec, v, err, meta=True)
+    assert r[7] == FLAG_SUCCESS
+    assert counts.dtype == np.int32
+    assert counts.shape == (2,)
+    assert counts[1] >= counts[0] >= 1
+    assert len(_single(spec, v, err)) == 2
+    _, _, failed = _single(spec, v, err, guide=np.nan, meta=True)
+    np.testing.assert_array_equal(failed, [-1, -1])
+
+    fits, _, batch_counts = fit_spectra_batch(
+        spectra=batch_data["spectra"],
+        dopp_slit=batch_data["v"],
+        spec_noise=batch_data["noise"],
+        guide_velocities=0.0,
+        meta=True,
+        **COMMON_KW,
+    )
+    assert batch_counts.shape == (batch_data["n"], 2)
+    assert (batch_counts[fits[:, 7] == FLAG_SUCCESS] >= 1).all()
+    for i in range(5):
+        _, _, single = _single(
+            batch_data["spectra"][i], batch_data["v"], batch_data["noise"][i], meta=True
+        )
+        np.testing.assert_array_equal(batch_counts[i], single, err_msg=f"row {i}")

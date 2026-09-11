@@ -119,7 +119,7 @@ fn returns_no_local_max_when_no_sample_in_search_window() {
 }
 
 #[test]
-fn large_window_uses_heap_fallback_and_still_fits() {
+fn large_window_still_fits() {
     let v = velocity_grid(700, -350.0, 1.0);
     let spectrum = gaussian_spectrum(&v, 1.0, 0.0, SIGMA_TRUE);
     let noise = vec![0.01; v.len()];

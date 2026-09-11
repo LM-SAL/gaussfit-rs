@@ -8,11 +8,7 @@ Functions
 
 .. autofunction:: gaussfit_rs.fit_spectra_batch
 
-.. autofunction:: gaussfit_rs.fit_spectra_batch_guided
-
-.. autofunction:: gaussfit_rs.fit_spectra_batch_slits
-
-.. autofunction:: gaussfit_rs.fit_gaussian_f32
+.. autofunction:: gaussfit_rs.fit_gaussian
 
 Result type
 -----------
@@ -37,3 +33,12 @@ Constants
    :value: 2.0
 
    LM optimiser did not converge within ``max_iter`` iterations.
+
+.. py:data:: gaussfit_rs.QUALITY_UNCONSTRAINED
+   :value: 1
+
+.. py:data:: gaussfit_rs.QUALITY_ZERO_ERROR
+   :value: 2
+
+.. py:data:: gaussfit_rs.QUALITY_PEGGED
+   :value: 4

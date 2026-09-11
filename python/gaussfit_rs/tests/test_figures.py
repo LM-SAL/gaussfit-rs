@@ -31,7 +31,7 @@ from gaussfit_rs import (
     QUALITY_PEGGED,
     QUALITY_UNCONSTRAINED,
     QUALITY_ZERO_ERROR,
-    fit_gaussian_f32,
+    fit_gaussian,
 )
 from gaussfit_rs.tests.helpers import FIXTURES, figure_test, fit_fixture
 
@@ -248,7 +248,7 @@ def test_parity_summary():
 @figure_test
 def test_low_level_gaussian_fits():
     """
-    ``fit_gaussian_f32`` on arbitrary data: a clean, a noisy, a bound-pinned and a misfit case.
+    ``fit_gaussian`` on arbitrary data: a clean, a noisy, a bound-pinned and a misfit case.
     """
     rng = np.random.default_rng(7)
     x = np.linspace(0.0, 100.0, 60, dtype=np.float32)
@@ -285,7 +285,7 @@ def test_low_level_gaussian_fits():
     for ax, (name, data, noise, initial, lower, upper) in zip(axes.flat, cases, strict=True):
         y = np.ascontiguousarray(data, dtype=np.float32)
         err = np.full(x.size, noise, dtype=np.float32)
-        fit = fit_gaussian_f32(
+        fit = fit_gaussian(
             x=x,
             y=y,
             error=err,
@@ -307,5 +307,5 @@ def test_low_level_gaussian_fits():
         )
         ax.set_xlabel("x")
     axes.flat[0].legend(fontsize=8)
-    fig.suptitle("fit_gaussian_f32: arbitrary data")
+    fig.suptitle("fit_gaussian: arbitrary data")
     return fig
