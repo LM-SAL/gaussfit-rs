@@ -20,12 +20,11 @@ CHI_ATOL = 5e-3  # reduced chi-square of noise-free fits is rounding noise
 MIN_CONSTRAINED = 0.5  # fraction of successful fits whose errors must be comparable
 
 
-def fit_fixture(ref, *, quality=False):
+def fit_fixture(ref):
     """
     Fit every spectrum of a recorded C-reference fixture with the Rust backend.
 
-    With ``quality=True`` the calls use the opt-in ninth column, so ``fits[:, 8]`` holds the quality
-    bits for every row (see :data:`gaussfit_rs.QUALITY_UNCONSTRAINED` and friends).
+    ``fits[:, 8]`` holds the quality bits (see :data:`gaussfit_rs.QUALITY_UNCONSTRAINED`).
     """
     params = {key: cast(ref[key]) for key, cast in FIT_KEYS.items()}
     return fit_spectra_batch(
@@ -34,7 +33,6 @@ def fit_fixture(ref, *, quality=False):
         spec_noise=ref["noise"],
         guide_velocities=ref["guides"],
         dv=float(np.median(np.gradient(ref["dopp"]))),
-        quality=quality,
         **params,
     )
 

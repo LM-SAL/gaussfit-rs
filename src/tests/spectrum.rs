@@ -221,9 +221,9 @@ fn negative_peak_returns_no_local_max() {
 
 #[test]
 fn quality_bits_separate_constrained_unconstrained_zero_and_pegged_fits() {
-    // Opt-in quality bits (ninth result column with `quality=True`). They are
-    // reported separately because they mean different things: see "Opt-In
-    // Unconstrained-Fit Indicator" in docs/design-notes.rst.
+    // Quality bits (the ninth result column). They are
+    // reported separately because they mean different things: see "Unconstrained-Fit
+    // Indicator" in docs/design-notes.rst.
     let v = velocity_grid(60, -300.0, 600.0 / 59.0);
     let clean = fit_clean_spectrum_with_noise(
         &v,

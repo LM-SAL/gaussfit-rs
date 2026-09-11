@@ -80,12 +80,12 @@ is then fitted in one call from a reshaped view, with no per-slit copies:
        spectra=rows, dopp_slit=grids, spec_noise=noise.reshape(-1, n_wave),
        guide_velocities=guides.ravel(), slit_index=slit_index, **options,
    )
-   fits = fits.reshape(*flux.shape[:-1], 8)
+   fits = fits.reshape(*flux.shape[:-1], 9)
 
 Output format
 -------------
 
-Both functions return one 8-element float32 row per spectrum:
+Both functions return one 9-element float32 row per spectrum:
 
 .. list-table::
    :header-rows: 1
@@ -118,16 +118,18 @@ Both functions return one 8-element float32 row per spectrum:
    * - 7
      - flag
      - Status code (0 = success, 1 = no peak, 2 = no convergence)
+   * - 8
+     - quality
+     - Quality bits, see below (0 for failed fits)
 
 Fields 0-6 are ``NaN`` when ``flag != FLAG_SUCCESS``. :class:`~gaussfit_rs.FitResult` unpacks a
 row by name. The second return value is the fitting window, ``(i_left, i_right)`` per spectrum,
 half-open and ``(0, 0)`` when no peak was found.
 
-Opt-in unconstrained-fit indicator
-----------------------------------
+Fit quality indicator
+---------------------
 
-``quality=True`` appends a ninth column: 0 for failed fits (the flag column reports those) and
-otherwise a mask of these bits, exported as :data:`~gaussfit_rs.QUALITY_UNCONSTRAINED`,
+Column 8 is 0 for failed fits (the flag column reports those) and otherwise a mask of these bits, exported as :data:`~gaussfit_rs.QUALITY_UNCONSTRAINED`,
 :data:`~gaussfit_rs.QUALITY_ZERO_ERROR` and :data:`~gaussfit_rs.QUALITY_PEGGED`:
 
 .. list-table::
@@ -161,8 +163,8 @@ Convert the float32 quality column to integers before testing individual bits:
 exact fits. Failed fits must be checked separately because their quality bits are zero.
 ``flags != 0`` also includes pegged parameters, which may be legitimate saturation. The amplitude
 interval is deliberately excluded: in the pipeline configuration it is a detection window of
-+/-10 % of the peak, so comparing against its width flags ordinary low-SNR fits. See "Opt-In
-Unconstrained-Fit Indicator" in the design notes for the measurements and the cases no bit
++/-10 % of the peak, so comparing against its width flags ordinary low-SNR fits. See "Unconstrained-Fit
+Indicator" in the design notes for the measurements and the cases no bit
 catches.
 
 Solver counts

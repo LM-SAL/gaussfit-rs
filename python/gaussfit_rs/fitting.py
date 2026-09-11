@@ -14,10 +14,10 @@ Index   Field            Description
 5       sigma_err        1-σ uncertainty on sigma [km/s]
 6       reduced_chi2     Reduced χ² of best fit
 7       flag             Status: FLAG_SUCCESS / FLAG_NO_LOCAL_MAX / FLAG_NO_CONVERGENCE
-8       quality          Only with ``quality=True``: the QUALITY_* bits
+8       quality          The QUALITY_* bits, 0 for failed fits
 ======  ===============  =====================================================
 
-All fields except *flag* (and *quality*, which is 0) are ``NaN`` when ``flag != FLAG_SUCCESS``.
+Fields 0-6 are ``NaN`` when ``flag != FLAG_SUCCESS``.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ FLAG_SUCCESS: float = 0.0
 FLAG_NO_LOCAL_MAX: float = 1.0
 FLAG_NO_CONVERGENCE: float = 2.0
 
-# Opt-in quality bits, returned in column 8 as a float when ``quality=True``. Bits are reported
+# Quality bits, returned in column 8 as a float. Bits are reported
 # separately instead of folded into one boolean because they answer different questions; a
 # consumer that wants "any of them" tests ``fits[:, 8] != 0``.
 QUALITY_UNCONSTRAINED: int = 1
@@ -74,6 +74,8 @@ A fitted parameter sits exactly on a bound: reported, not judged (saturation als
 class FitResult(NamedTuple):
     """
     A fit result row by name; ``FitResult.from_array(row)`` accepts 8 or 9 elements.
+
+    ``quality`` is the bit mask of column 8, or 0 for the 8-element rows of :func:`fit_gaussian`.
     """
 
     amplitude: float
@@ -84,13 +86,16 @@ class FitResult(NamedTuple):
     sigma_err: float
     reduced_chi2: float
     flag: float
+    quality: int = 0
 
     @classmethod
     def from_array(cls, arr: NDArray[np.float32]) -> FitResult:
         """
-        Build from a result row; a ninth quality element, if present, is dropped.
+        Build from a result row of 8 or 9 elements.
         """
-        return cls(*arr[:8].tolist())
+        amplitude, velocity, sigma, amp_err, vel_err, sig_err, chi2, flag, *rest = arr.tolist()
+        quality = int(rest[0]) if rest else 0
+        return cls(amplitude, velocity, sigma, amp_err, vel_err, sig_err, chi2, flag, quality)
 
     @property
     def converged(self) -> bool:
@@ -120,7 +125,6 @@ def fit_spectra_batch(
     ftol: float = 1.0e-6,
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
-    quality: bool = False,
     meta: bool = False,
 ) -> (
     tuple[NDArray[np.float32], NDArray[np.int32]]
@@ -170,10 +174,6 @@ def fit_spectra_batch(
         norm (default 1e-6 each).
     max_iter:
         Maximum Levenberg-Marquardt iterations (default 2000).
-    quality:
-        When True, a ninth column holds the quality bits (:data:`QUALITY_UNCONSTRAINED`,
-        :data:`QUALITY_ZERO_ERROR`, :data:`QUALITY_PEGGED`): 0 when none apply and for failed
-        fits, which the flag column reports.
     meta:
         When True, a third return value carries the solver's ``[n_iter, n_fev]`` per row
         (accepted Levenberg-Marquardt iterations and model evaluations, Jacobian calls
@@ -181,8 +181,10 @@ def fit_spectra_batch(
 
     Returns
     -------
-    fit_results : ndarray, shape (N, 8) or (N, 9), float32
-        One row per spectrum; see the module docstring for the columns.
+    fit_results : ndarray, shape (N, 9), float32
+        One row per spectrum; see the module docstring for the columns. Column 8 holds the
+        quality bits (:data:`QUALITY_UNCONSTRAINED`, :data:`QUALITY_ZERO_ERROR`,
+        :data:`QUALITY_PEGGED`), 0 when none apply and for failed fits.
     indices : ndarray, shape (N, 2), int32
         ``(i_left, i_right)`` of the fitting window per row, half-open, ``(0, 0)`` when no peak
         was found.
@@ -215,7 +217,6 @@ def fit_spectra_batch(
         float(ftol),
         float(gtol),
         int(max_iter),
-        bool(quality),
     )
     return (fits, indices, counts) if meta else (fits, indices)
 
@@ -234,8 +235,8 @@ def fit_single_spectrum(
     """
     Fit one spectrum; ``options`` are the keyword arguments of :func:`fit_spectra_batch`.
 
-    Returns the result row (8 elements, or 9 with ``quality=True``) and the ``(i_left, i_right)``
-    fitting window, plus the ``[n_iter, n_fev]`` counts with ``meta=True``.
+    Returns the 9-element result row and the ``(i_left, i_right)`` fitting window, plus the
+    ``[n_iter, n_fev]`` counts with ``meta=True``.
     """
     meta = options.pop("meta", False)
     fits, indices, counts = fit_spectra_batch(

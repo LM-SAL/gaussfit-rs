@@ -18,7 +18,7 @@ pub struct FitSingleSpectrumResult {
     pub(crate) fit_results: [f32; 8],
     pub(crate) i_left: i32,
     pub(crate) i_right: i32,
-    /// Quality bitmask for successful fits; zero for failures. Exposed with `quality=True`.
+    /// Quality bitmask for successful fits; zero for failures. The ninth result column.
     pub(crate) quality: u8,
     /// Solver iterations and model evaluations for successful fits; -1 otherwise. Exposed with
     /// `meta=True`.

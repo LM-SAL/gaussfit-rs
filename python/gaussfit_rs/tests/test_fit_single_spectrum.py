@@ -68,7 +68,7 @@ def batch_data():
 def test_single_recovers_gaussian():
     v, spec, err = _make_spectrum(amp=2.0, vel=15.0)
     r, (il, ir) = _single(spec, v, err)
-    assert r.shape == (8,)
+    assert r.shape == (9,)
     assert r.dtype == np.float32
     assert r[7] == FLAG_SUCCESS
     assert abs(r[0] - 2.0) < 0.1
@@ -121,7 +121,7 @@ def test_batch_output_shapes(batch_data):
         guide_velocities=0.0,
         **COMMON_KW,
     )
-    assert fits.shape == (batch_data["n"], 8)
+    assert fits.shape == (batch_data["n"], 9)
     assert idx.shape == (batch_data["n"], 2)
     assert fits.dtype == np.float32
     assert idx.dtype == np.int32
@@ -229,13 +229,13 @@ def test_nonfinite_guide_reports_no_local_max(guide):
     np.testing.assert_array_equal(idx[0], [0, 0])
 
 
-def test_quality_bits_are_opt_in_and_report_unconstrained_successes():
+def test_quality_bits_report_unconstrained_successes():
     """
-    ``quality=True`` adds the documented quality bits; default calls are unchanged.
+    Column 8 carries the documented quality bits.
     """
     v, spec, err = _make_spectrum(amp=1.0, noise=0.05)
 
-    fits = _single(spec, v, err, quality=True)[0]
+    fits = _single(spec, v, err)[0]
     assert fits.shape == (9,)
     assert fits[7] == FLAG_SUCCESS
     assert fits[8] == 0  # a real line constrains its parameters
@@ -245,14 +245,14 @@ def test_quality_bits_are_opt_in_and_report_unconstrained_successes():
     checker = np.where(np.arange(v.size) % 2 == 0, 3.0, -3.0)
     faint = (0.5 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2) + checker).astype(np.float32)
     faint_err = np.full(v.size, 3.0, dtype=np.float32)
-    fits_u = _single(faint, v, faint_err, quality=True)[0]
+    fits_u = _single(faint, v, faint_err)[0]
     assert fits_u[7] == FLAG_SUCCESS
     assert fits_u[4] >= 2.0 * COMMON_KW["dv"] * COMMON_KW["npix"]
     assert int(fits_u[8]) & QUALITY_UNCONSTRAINED
 
     # Failed fits are reported by the result flag, not the indicator.
     flat = np.full(v.size, -1.0, dtype=np.float32)
-    fits_f = _single(flat, v, err, quality=True)[0]
+    fits_f = _single(flat, v, err)[0]
     assert fits_f[7] == FLAG_NO_LOCAL_MAX
     assert fits_f[8] == 0  # failed fits carry no indicator
 
@@ -271,10 +271,7 @@ def test_batch_quality_bits_match_the_documented_criterion():
     noises = np.stack([err, np.full(v.size, 3.0, dtype=np.float32), err])
     kwargs = {"spectra": spectra, "dopp_slit": v, "spec_noise": noises, "guide_velocities": 0.0}
 
-    plain, _ = fit_spectra_batch(**kwargs, **COMMON_KW)
-    assert plain.shape[1] == 8
-
-    fits, indices = fit_spectra_batch(**kwargs, quality=True, **COMMON_KW)
+    fits, indices = fit_spectra_batch(**kwargs, **COMMON_KW)
     flags = fits[:, 8]
     assert fits.shape[1] == 9
     assert flags.dtype == np.float32
@@ -300,9 +297,10 @@ def test_batch_quality_bits_match_the_documented_criterion():
 
 def test_fit_result_named_tuple():
     v, spec, err = _make_spectrum(amp=2.0)
-    row, _ = _single(spec, v, err, quality=True)
+    row, _ = _single(spec, v, err)
     result = FitResult.from_array(row)
     assert result.converged
+    assert result.quality == 0
     assert abs(result.amplitude - 2.0) < 0.1
     assert result.flag == FLAG_SUCCESS
 
