@@ -36,5 +36,5 @@ The wheel targets baseline x86-64 so it runs everywhere. On a machine with AVX2 
 
    RUSTFLAGS="-C target-cpu=x86-64-v3" maturin develop --release
 
-is 3-4 % faster per fit; see section 5 of ``docs/performance-plan.md`` for the measurement.
+is 3-4 % faster per fit; see "Performance" in the design notes for the measurement.
 It is a build-time choice, not a default, because such a build does not run on older CPUs.

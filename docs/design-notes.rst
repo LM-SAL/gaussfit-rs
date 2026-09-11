@@ -54,10 +54,10 @@ Bound-Limited Steps And The MPFIT Snap Hazard
 - **Code:** ``third_party/rmpfit/src/lib.rs::MPFit::iterate`` (bound clamp; the
   local patch is ``third_party/rmpfit/bound-snap.patch``, documented in
   ``third_party/rmpfit/VENDORED.md``), consumed by
-  ``src/gaussian.rs::fit_gaussian_bounded_with_config``.
+  ``src/gaussian.rs::fit_gaussian_bounded``.
 - **Tests encoding current behavior:**
   ``src/tests/gaussian.rs::bound_pinned_window_matches_c_reference``,
-  ``python/gaussfit_rs/tests/test_fit_gaussian.py::test_f32_bound_limited_step_does_not_stall``,
+  ``python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall``,
   ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension``
   (46 seeds, needs the C reference).
 
@@ -142,7 +142,7 @@ that row so the other 39 low-SNR rows stay under the gate, and asserted to be
 taken exactly once, so the exception cannot silently go stale and the one-sided
 contract stays meaningful everywhere else.
 
-``docs/improvement-todos.md`` (B4) records separate pipeline comparisons on MUSE
+The commit history of 2026-09-11 records separate pipeline comparisons on MUSE
 simulation data. Those measurements are not an observational validation and are
 not part of the committed parity fixtures. If a future rmpfit release fixes
 ``lmpar`` upstream, drop the local patch after checking parity. Keep the exception
@@ -313,3 +313,40 @@ and ``...::test_batch_quality_bits_match_the_documented_criterion`` (bits 1 and 
 velocity/width/zero rule recomputed from the returned columns), plus the figure suite
 (``test_quality_per_family``, and the ``q`` marker in ``test_fit_gallery`` /
 ``test_family_overview``).
+
+Performance
+-----------
+
+- **Status:** measured 2026-09-11; per-fit allocation removed, the rest attributed.
+- **Owner:** Nabil Freij.
+- **Code:** ``third_party/rmpfit/workspace.patch`` (``MPWorkspace``, ``mpfit_with_workspace``),
+  the per-thread workspace in ``src/gaussian.rs``, the per-thread window buffers in
+  ``src/spectrum.rs``.
+- **Harness:** ``benchmarks/throughput.py`` (``--npix`` sweeps the window; the fitted intercept
+  is the per-fit overhead, the slope the per-sample arithmetic).
+
+What A Fit Costs
+~~~~~~~~~~~~~~~~
+
+Single-threaded, a fit costs about 1.4 us fixed plus 0.08 us per sample, so at the pipeline's
+5-sample window most of the time is per-fit work, not arithmetic. Upstream rmpfit made about
+28 heap allocations per fit; the workspace patch removed all of them for 0.24 us per fit
+(the intercept went from 1.78 to 1.43 us on the synthetic sweep, 0.2-0.35 us per row on real
+MUSE rows) with bit-identical output over the parity corpus. glibc's tcache makes an
+allocation cost about 10 ns, so the gain is bounded; a faster allocator does not help.
+
+Against The C++ Batcher
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Compared with MUSE's ``fastfit2`` C++ extension on real rows at matched thread counts, Rust is
+level with a plain ``-O3`` build of the same cmpfit and 15-20 % slower per row single-threaded
+than the extension Python's default ``CFLAGS`` produce (``-fno-strict-overflow`` alone halves
+GCC's cost in the cmpfit helpers); at 32 threads Rust is faster. Iteration counts are not the
+cause: on identical rows Rust accepts 3-5 % more steps and evaluates the model 1-5 % fewer times.
+Nor are precision (the same C++ in double is within 2 % of float), ``exp``, the peak search or
+the ISA (``x86-64-v3`` buys 3-4 %, documented as an opt-in build in the installation guide).
+Instruction counts put the remainder in the port's per-iteration bookkeeping (``iterate``,
+``qrfac``, ``transpose``): bounds checks and ``Vec`` indexing where cmpfit walks raw pointers.
+A patch binding each stage's buffers to local slices recovered 3 % for an 864-line diff and was
+not kept. The solver is under 1 % of a pipeline run; the end-to-end lever was the per-slit
+staging on the caller's side, which the ``slit_index`` argument of ``fit_spectra_batch`` removes.
