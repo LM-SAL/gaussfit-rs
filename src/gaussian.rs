@@ -1,7 +1,15 @@
+use std::cell::RefCell;
+
 use num_traits::Float;
-use rmpfit::{MPConfig, MPFitter, MPPar, MPResult, MPSide, MPSuccess};
+use rmpfit::{MPConfig, MPFitter, MPPar, MPResult, MPSide, MPSuccess, MPWorkspace};
 
 use crate::{FTOL, GTOL, MAX_ITER, XTOL};
+
+thread_local! {
+    // One solver workspace per thread (Rayon workers included): after the
+    // first fit on a thread, a fit makes no heap allocations.
+    static WORKSPACE: RefCell<MPWorkspace> = RefCell::new(MPWorkspace::default());
+}
 
 /// Convergence tolerances and iteration limit for the LM solver.
 #[derive(Clone, Copy, Debug)]
@@ -124,10 +132,9 @@ impl<F: Float> MPFitter for GaussianProblem<'_, F> {
 ///
 /// The fit is delegated to [`rmpfit`], a pure-Rust port of the CMPFIT/MINPACK
 /// `mpfit` routine, so the convergence semantics match the original C
-/// extension. The vendored copy in `third_party/rmpfit` carries one local
-/// patch: a step clamped at a bound lands that parameter exactly on the
-/// bound, where stock MPFIT (C and Rust alike) can stop a few ULP short and
-/// then stall with a spurious "converged" status; see
+/// extension. The vendored copy in `third_party/rmpfit` carries local
+/// patches (a bound-snap fix, the MINPACK `lmpar` clamp, and a reusable
+/// per-thread workspace so a fit allocates nothing); see
 /// `third_party/rmpfit/VENDORED.md`. Parameter errors use the full
 /// three-parameter Hessian, including parameters at their bounds, matching
 /// the C SciPy-style covariance calculation.
@@ -211,7 +218,9 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
         config: mp_config,
     };
 
-    let status = problem.mpfit(&mut params).ok()?;
+    let status = WORKSPACE
+        .with_borrow_mut(|workspace| problem.mpfit_with_workspace(&mut params, workspace))
+        .ok()?;
 
     // Chi/Par/Both/Dir are normal convergence; Ftol/Xtol/Gtol mean the solver
     // reached a rounding-limited minimum it cannot improve (still a usable fit).
