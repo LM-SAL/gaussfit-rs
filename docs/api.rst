@@ -8,7 +8,7 @@ Functions
 
 .. autofunction:: gaussfit_rs.fit_spectra_batch
 
-.. autofunction:: gaussfit_rs.fit_gaussian_f32
+.. autofunction:: gaussfit_rs.fit_gaussian
 
 Result type
 -----------
@@ -16,20 +16,16 @@ Result type
 .. autoclass:: gaussfit_rs.FitResult
    :members: from_array, converged
 
-Constants
----------
+Result rows and constants
+-------------------------
 
-.. py:data:: gaussfit_rs.FLAG_SUCCESS
-   :value: 0.0
+.. automodule:: gaussfit_rs.fitting
 
-   Fit converged successfully.
+The constants are re-exported from the ``gaussfit_rs`` package.
 
-.. py:data:: gaussfit_rs.FLAG_NO_LOCAL_MAX
-   :value: 1.0
-
-   No spectral peak found within the search window.
-
-.. py:data:: gaussfit_rs.FLAG_NO_CONVERGENCE
-   :value: 2.0
-
-   LM optimiser did not converge within ``max_iter`` iterations.
+.. autodata:: gaussfit_rs.fitting.FLAG_SUCCESS
+.. autodata:: gaussfit_rs.fitting.FLAG_NO_LOCAL_MAX
+.. autodata:: gaussfit_rs.fitting.FLAG_NO_CONVERGENCE
+.. autodata:: gaussfit_rs.fitting.QUALITY_UNCONSTRAINED
+.. autodata:: gaussfit_rs.fitting.QUALITY_ZERO_ERROR
+.. autodata:: gaussfit_rs.fitting.QUALITY_PEGGED

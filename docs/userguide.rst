@@ -40,11 +40,10 @@ Levenberg-Marquardt Gaussian fit on the surrounding pixel window.
 Batch fitting (IFU data)
 ------------------------
 
-:func:`~gaussfit_rs.fit_spectra_batch` is the recommended entry point for IFU
-data.  It accepts a 2-D ``(N, M)`` array and processes all N rows concurrently
-using Rayon, releasing the Python GIL for the full computation.
-``spec_noise`` must have exactly the same shape as ``spectra``.  When
-``n_pixels`` is supplied, the first ``n_pixels`` columns of both arrays are used.
+:func:`~gaussfit_rs.fit_spectra_batch` is the entry point for IFU data. It takes a 2-D
+``(N, M)`` array and fits every row concurrently with Rayon, releasing the GIL for the whole
+computation. ``spec_noise`` has the same shape as ``spectra``; ``guide_velocities`` is one value
+per row or a scalar for all rows.
 
 .. code-block:: python
 
@@ -54,7 +53,7 @@ using Rayon, releasing the Python GIL for the full computation.
        spectra=spectra_2d,       # (N, M) float32, C-contiguous
        dopp_slit=velocity_grid,  # (M,) float32
        spec_noise=noise_2d,      # (N, M) float32, C-contiguous
-       guide_velocity=0.0,
+       guide_velocities=0.0,
        velocity_range=200.0,
        npix=10,
        npix_slack=2,
@@ -66,14 +65,27 @@ using Rayon, releasing the Python GIL for the full computation.
        amplitude_rel_max=2.0,
    )
 
-   # fits[i, 7] == FLAG_SUCCESS means row i converged
-   converged_mask = fits[:, 7] == 0.0
-   velocities = fits[converged_mask, 1]   # km/s
+   converged = fits[:, 7] == 0.0   # FLAG_SUCCESS
+   velocities = fits[converged, 1]  # km/s
+
+When the velocity grid differs per slit, pass the grids as one ``(n_slit, M)`` table and
+``slit_index``, an ``int32`` array naming the grid row of each spectrum. A block with a slit axis
+is then fitted in one call from a reshaped view, with no per-slit copies:
+
+.. code-block:: python
+
+   rows = flux.reshape(-1, n_wave)                     # view
+   slit_index = np.indices(flux.shape[:-1])[slit_axis].ravel()
+   fits, indices = fit_spectra_batch(
+       spectra=rows, dopp_slit=grids, spec_noise=noise.reshape(-1, n_wave),
+       guide_velocities=guides.ravel(), slit_index=slit_index, **options,
+   )
+   fits = fits.reshape(*flux.shape[:-1], 9)
 
 Output format
 -------------
 
-Both functions return an 8-element float array per spectrum:
+Both functions return one 9-element float32 row per spectrum:
 
 .. list-table::
    :header-rows: 1
@@ -106,59 +118,88 @@ Both functions return an 8-element float array per spectrum:
    * - 7
      - flag
      - Status code (0 = success, 1 = no peak, 2 = no convergence)
+   * - 8
+     - quality
+     - Quality bits, see below (0 for failed fits)
 
-Fields 0-6 are ``NaN`` when ``flag != FLAG_SUCCESS``.
+Fields 0-6 are ``NaN`` when ``flag != FLAG_SUCCESS``. :class:`~gaussfit_rs.FitResult` unpacks a
+row by name. The second return value is the fitting window, ``(i_left, i_right)`` per spectrum,
+half-open and ``(0, 0)`` when no peak was found.
 
-Use :class:`~gaussfit_rs.FitResult` to unpack by name:
+Fit quality indicator
+---------------------
+
+Column 8 is 0 for failed fits (the flag column reports those) and otherwise a mask of these bits, exported as :data:`~gaussfit_rs.QUALITY_UNCONSTRAINED`,
+:data:`~gaussfit_rs.QUALITY_ZERO_ERROR` and :data:`~gaussfit_rs.QUALITY_PEGGED`:
+
+.. list-table::
+   :header-rows: 1
+
+   * - bit
+     - meaning
+   * - 1
+     - a parameter's error is not smaller than the interval it was bounded to: velocity
+       (``2 * dv * npix``) or linewidth (``width_max - width_min``). The data do not constrain it.
+   * - 2
+     - a formal error is exactly 0. This can result from the near-singular guard or from an exact
+       fit, because formal errors scale with the residuals. It does not prove the fit is unconstrained.
+   * - 4
+     - a fitted parameter sits exactly on a bound. Reported, not judged: legitimate saturation
+       sets this bit too (a broad line pinned at ``width_max``), so it is the most common bit and
+       the one not to mask on blindly.
+
+Convert the float32 quality column to integers before testing individual bits:
 
 .. code-block:: python
 
-   from gaussfit_rs import FitResult
+   from gaussfit_rs import FLAG_SUCCESS, QUALITY_UNCONSTRAINED, QUALITY_ZERO_ERROR
 
-   r = FitResult.from_array(result_arr)
-   r.velocity      # float [km/s]
-   r.sigma         # float [km/s]
-   r.converged     # bool
+   flags = fits[:, 8].astype("uint8")
+   failed = fits[:, 7] != FLAG_SUCCESS
+   unconstrained = (flags & QUALITY_UNCONSTRAINED) != 0
+   suspect = (flags & (QUALITY_UNCONSTRAINED | QUALITY_ZERO_ERROR)) != 0
 
-Input validation and tolerances
--------------------------------
+``suspect`` includes zero-error fits for inspection; it is not an automatic rejection rule for
+exact fits. Failed fits must be checked separately because their quality bits are zero.
+``flags != 0`` also includes pegged parameters, which may be legitimate saturation. The amplitude
+interval is deliberately excluded: in the pipeline configuration it is a detection window of
++/-10 % of the peak, so comparing against its width flags ordinary low-SNR fits. See "Unconstrained-Fit
+Indicator" in the design notes for the measurements and the cases no bit
+catches.
 
-All fitting functions require finite, positive tolerances and ``max_iter``.
-Spectrum fitting also requires positive ``npix`` and ``dv``, non-negative
-``npix_slack`` and ``velocity_range``, increasing amplitude and width bounds,
-and finite numeric inputs.  Low-level Gaussian fitting requires finite ``x`` and
-``y`` arrays, finite positive ``error`` values, finite initial parameters, and
-finite increasing bounds.
+Solver counts
+-------------
 
-The f32 functions default to:
+``meta=True`` adds one more return value: an ``int32`` array of ``[n_iter, n_fev]`` per fit
+(accepted Levenberg-Marquardt iterations and model evaluations, Jacobian calls included), ``-1``
+where the fit did not run or did not converge. It is there for profiling and for comparing
+against other MPFIT builds.
 
-.. code-block:: python
+Tolerances
+----------
 
-   fit_single_spectrum(
-       ...,
-       xtol=1e-6,     # parameter step tolerance
-       ftol=1e-6,     # cost-function change tolerance
-       gtol=1e-6,     # gradient norm tolerance
-       max_iter=2000,
-   )
-
-Tighten these for high-SNR data; relax (e.g. ``gtol=1e-4``) for bulk runs
-where exact convergence is less critical.
+Every fitting function takes ``xtol``, ``ftol``, ``gtol`` (default ``1e-6``) and ``max_iter``
+(default 2000), which must be finite and positive. Tighten them for high-SNR data; relax them
+(for example ``gtol=1e-4``) for bulk runs where exact convergence matters less. The other
+options must be finite, with positive ``npix`` and ``dv``, non-negative ``npix_slack`` and
+``velocity_range``, and increasing amplitude and width bounds.
 
 Low-level Gaussian fitting
 --------------------------
 
-:func:`~gaussfit_rs.fit_gaussian_f32` fits a Gaussian to arbitrary
-(x, y ± error) data without the spectral peak-finding step.
+:func:`~gaussfit_rs.fit_gaussian` fits a bounded Gaussian to arbitrary ``(x, y ± error)`` data
+without the peak search, for use outside the spectral pipeline:
 
 .. code-block:: python
 
-   from gaussfit_rs import fit_gaussian_f32
-   import numpy as np
+   from gaussfit_rs import fit_gaussian
 
-   result = fit_gaussian_f32(
+   row = fit_gaussian(
        x=x, y=y, error=err,
-       initial=np.array([1.0, 0.0, 1.0], dtype=np.float32),
-       lower_bounds=np.array([0.1, -5.0, 0.1], dtype=np.float32),
-       upper_bounds=np.array([2.0, 5.0, 5.0], dtype=np.float32),
+       initial=[1.0, 0.0, 10.0],          # amplitude, mean, sigma
+       lower_bounds=[0.0, -50.0, 1.0],
+       upper_bounds=[5.0, 50.0, 40.0],
    )
+
+The row has the same layout as above without the peak-search flag: *flag* is
+``FLAG_SUCCESS`` or ``FLAG_NO_CONVERGENCE``.

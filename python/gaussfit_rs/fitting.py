@@ -1,7 +1,7 @@
 """
 Python API for the gaussfit-rs Rust backend.
 
-Output array layout — 8 elements, dtype float32:
+Result row layout, dtype float32:
 
 ======  ===============  =====================================================
 Index   Field            Description
@@ -13,10 +13,34 @@ Index   Field            Description
 4       velocity_err     1-σ uncertainty on velocity [km/s]
 5       sigma_err        1-σ uncertainty on sigma [km/s]
 6       reduced_chi2     Reduced χ² of best fit
-7       flag             Status: FLAG_SUCCESS / FLAG_NO_LOCAL_MAX / FLAG_NO_CONVERGENCE
+7       flag             Fit status, one of the values below
+8       quality          Quality bit mask, a sum of the bits below; 0 for failed fits
 ======  ===============  =====================================================
 
-All fields except *flag* are ``NaN`` when ``flag != FLAG_SUCCESS``.
+Fields 0-6 are ``NaN`` when ``flag != FLAG_SUCCESS``.
+
+=====  ===================  ==========================================================
+Flag   Name                 Meaning
+=====  ===================  ==========================================================
+0      FLAG_SUCCESS         The solver converged; the row holds the fit.
+1      FLAG_NO_LOCAL_MAX    No positive peak in the search window (including a
+                            non-finite guide, or fewer than 3 usable samples).
+2      FLAG_NO_CONVERGENCE  The solver stopped without meeting a convergence criterion.
+=====  ===================  ==========================================================
+
+=====  =====================  ========================================================
+Bit    Name                   Meaning
+=====  =====================  ========================================================
+1      QUALITY_UNCONSTRAINED  A parameter's error is not smaller than the interval it
+                              was bounded to (velocity: ``2 * dv * npix``; width:
+                              ``width_max - width_min``); the data do not constrain it.
+2      QUALITY_ZERO_ERROR     A formal error is exactly zero: a near-singular Hessian or
+                              an exact fit.
+4      QUALITY_PEGGED         A fitted parameter sits exactly on a bound. Reported, not
+                              judged: legitimate saturation sets it too.
+=====  =====================  ========================================================
+
+Only converged fits carry quality bits; test them with ``int(row[8]) & QUALITY_...``.
 """
 
 from __future__ import annotations
@@ -25,52 +49,74 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
-from ._gaussfit_rs import fit_gaussian_f32 as _fit_gaussian_f32
-from ._gaussfit_rs import fit_single_spectrum as _fit_single_spectrum
-from ._gaussfit_rs import fit_spectra_batch_guided as _fit_spectra_batch_guided
+from ._gaussfit_rs import fit_gaussian as _fit_gaussian
+from ._gaussfit_rs import fit_spectra_batch as _fit_spectra_batch
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
+    from numpy.typing import ArrayLike, NDArray
 
 __all__ = [
     "FLAG_NO_CONVERGENCE",
     "FLAG_NO_LOCAL_MAX",
     "FLAG_SUCCESS",
+    "QUALITY_PEGGED",
+    "QUALITY_UNCONSTRAINED",
+    "QUALITY_ZERO_ERROR",
     "FitResult",
-    "fit_gaussian_f32",
+    "fit_gaussian",
     "fit_single_spectrum",
     "fit_spectra_batch",
-    "fit_spectra_batch_guided",
 ]
+
+_SPECTRA_NDIM = 2
+
+# Fit-status flag values returned in column 7, as float32 like the rest of the row.
+FLAG_SUCCESS: float = 0.0
+"""
+The solver converged; the row holds the fit.
+"""
+
+FLAG_NO_LOCAL_MAX: float = 1.0
+"""
+No positive peak in the search window, which covers an empty or all-negative window, a non-finite
+guide, and fewer than 3 usable samples around the peak.
+
+Fields 0-6 are NaN.
+"""
+
+FLAG_NO_CONVERGENCE: float = 2.0
+"""
+The solver stopped without meeting a convergence criterion (``max_iter`` or the evaluation cap).
+
+Fields 0-6 are NaN.
+"""
+
+# Quality bits, returned in column 8 as a float. Bits are reported
+# separately instead of folded into one boolean because they answer different questions; a
+# consumer that wants "any of them" tests ``fits[:, 8] != 0``.
+QUALITY_UNCONSTRAINED: int = 1
+"""
+A parameter's error is not smaller than the velocity or width interval it was bounded to.
+"""
+
+QUALITY_ZERO_ERROR: int = 2
+"""
+A formal error is exactly zero, including singular or exact fits.
+"""
+
+QUALITY_PEGGED: int = 4
+"""
+A fitted parameter sits exactly on a bound.
+
+Reported, not judged; legitimate saturation sets it too.
+"""
 
 
 class FitResult(NamedTuple):
     """
-    Named result from a single Gaussian fit.
+    A fit result row by name; ``FitResult.from_array(row)`` accepts 8 or 9 elements.
 
-    Attributes
-    ----------
-    amplitude : float
-        Fitted peak amplitude (same units as input spectrum).
-    velocity : float
-        Fitted line-centre velocity [km/s].
-    sigma : float
-        Fitted Gaussian width (1-sigma) [km/s].
-    amplitude_err : float
-        1-sigma uncertainty on *amplitude*.
-    velocity_err : float
-        1-sigma uncertainty on *velocity* [km/s].
-    sigma_err : float
-        1-sigma uncertainty on *sigma* [km/s].
-    reduced_chi2 : float
-        Reduced chi-squared of the best fit.
-    flag : float
-        Fit status code: :data:`FLAG_SUCCESS`, :data:`FLAG_NO_LOCAL_MAX`, or
-        :data:`FLAG_NO_CONVERGENCE`.
-
-    Notes
-    -----
-    All fields except *flag* are ``nan`` when ``flag != FLAG_SUCCESS``.
+    ``quality`` is the bit mask of column 8, or 0 for the 8-element rows of :func:`fit_gaussian`.
     """
 
     amplitude: float
@@ -81,13 +127,16 @@ class FitResult(NamedTuple):
     sigma_err: float
     reduced_chi2: float
     flag: float
+    quality: int = 0
 
     @classmethod
     def from_array(cls, arr: NDArray[np.float32]) -> FitResult:
         """
-        Construct a :class:`FitResult` from an 8-element fit array.
+        Build from a result row of 8 or 9 elements.
         """
-        return cls(*arr[:8].tolist())
+        amplitude, velocity, sigma, amp_err, vel_err, sig_err, chi2, flag, *rest = arr.tolist()
+        quality = int(rest[0]) if rest else 0
+        return cls(amplitude, velocity, sigma, amp_err, vel_err, sig_err, chi2, flag, quality)
 
     @property
     def converged(self) -> bool:
@@ -97,308 +146,190 @@ class FitResult(NamedTuple):
         return self.flag == FLAG_SUCCESS
 
 
-# Fit-status flag values returned in output[..., 7]
-FLAG_SUCCESS: float = 0.0
-FLAG_NO_LOCAL_MAX: float = 1.0
-FLAG_NO_CONVERGENCE: float = 2.0
-
-
-def fit_single_spectrum(
-    *,
-    spectrum: NDArray[np.float32],
-    dopp_slit: NDArray[np.float32],
-    spec_noise: NDArray[np.float32],
-    guide_velocity: float,
-    velocity_range: float,
-    npix: int,
-    npix_slack: int,
-    dv: float,
-    width_min: float,
-    n_pixels: int | None = None,
-    amplitude_rel_min: float,
-    amplitude_rel_max: float,
-    width_max: float,
-    width_guess: float,
-    xtol: float = 1.0e-6,
-    ftol: float = 1.0e-6,
-    gtol: float = 1.0e-6,
-    max_iter: int = 2000,
-) -> tuple[NDArray[np.float32], tuple[int, int]]:
-    """
-    Fit a single Gaussian to one spectrum using the Rust backend.
-
-    The function searches for the brightest peak within ``guide_velocity ±
-    velocity_range`` (km/s), normalises by that peak, then fits a bounded
-    Levenberg-Marquardt Gaussian using the surrounding ``2*npix`` pixel window.
-
-    Parameters
-    ----------
-    spectrum:
-        Spectral data, 1-D float32.  All three arrays are trimmed to
-        *n_pixels* before processing; pass pre-sliced arrays to avoid
-        any copy overhead.
-    dopp_slit:
-        Doppler velocity at each pixel [km/s], same length as *spectrum*.
-    spec_noise:
-        1-sigma noise estimate at each pixel (same units as *spectrum*).
-    guide_velocity:
-        Expected line-centre velocity [km/s] used to locate the peak.
-    velocity_range:
-        Half-width of the velocity search window around *guide_velocity* [km/s].
-    npix:
-        Half-width of the fitting window around the peak (pixels).
-    npix_slack:
-        Extra pixels added to the search window for the peak-finding step.
-    dv:
-        Pixel scale [km/s per pixel]; used to compute velocity bounds.
-    width_min:
-        Minimum allowed Gaussian sigma [km/s].
-    n_pixels:
-        Number of pixels to use from the start of each array.  Defaults to
-        ``len(spectrum)``.  Pass this when the arrays are longer than the
-        intended fitting window.
-    amplitude_rel_min:
-        Minimum allowed amplitude relative to the detected peak (e.g. 0.1).
-    amplitude_rel_max:
-        Maximum allowed amplitude relative to the detected peak (e.g. 2.0).
-    width_max:
-        Maximum allowed Gaussian sigma [km/s].
-    width_guess:
-        Initial guess for the Gaussian sigma [km/s].
-    xtol:
-        Convergence tolerance on the parameter step size (default 1e-6).
-    ftol:
-        Convergence tolerance on the cost-function change (default 1e-6).
-    gtol:
-        Convergence tolerance on the gradient norm (default 1e-6).
-    max_iter:
-        Maximum LM iterations (default 2000).
-
-    Returns
-    -------
-    fit_results : ndarray, shape (8,), float32
-        ``[amplitude, velocity, sigma, amplitude_err, velocity_err, sigma_err,
-        reduced_chi2, flag]``.  See module docstring for details.
-    (i_left, i_right) : tuple[int, int]
-        Pixel indices of the fitting window used (half-open, ``[i_left, i_right)``).
-    """
-    spectrum = np.ascontiguousarray(spectrum, dtype=np.float32)
-    n_px = int(n_pixels) if n_pixels is not None else len(spectrum)
-    return _fit_single_spectrum(
-        spectrum,
-        np.ascontiguousarray(dopp_slit, dtype=np.float32),
-        np.ascontiguousarray(spec_noise, dtype=np.float32),
-        float(guide_velocity),
-        float(velocity_range),
-        int(npix),
-        int(npix_slack),
-        float(dv),
-        float(width_min),
-        n_px,
-        float(amplitude_rel_min),
-        float(amplitude_rel_max),
-        float(width_max),
-        float(width_guess),
-        float(xtol),
-        float(ftol),
-        float(gtol),
-        int(max_iter),
-    )
-
-
-_SPECTRA_NDIM = 2
-
-
-def _require_2d_spectra(spectra: NDArray[np.float32]) -> None:
-    if spectra.ndim != _SPECTRA_NDIM:
-        msg = "spectra must be a 2-D (N, M) array"
-        raise ValueError(msg)
-
-
 def fit_spectra_batch(
     *,
-    spectra: NDArray[np.float32],
-    dopp_slit: NDArray[np.float32],
-    spec_noise: NDArray[np.float32],
-    guide_velocity: float,
+    spectra: ArrayLike,
+    dopp_slit: ArrayLike,
+    spec_noise: ArrayLike,
+    guide_velocities: ArrayLike,
     velocity_range: float,
     npix: int,
     npix_slack: int,
     dv: float,
     width_min: float,
-    n_pixels: int | None = None,
-    amplitude_rel_min: float,
-    amplitude_rel_max: float,
     width_max: float,
     width_guess: float,
+    amplitude_rel_min: float,
+    amplitude_rel_max: float,
+    slit_index: ArrayLike | None = None,
     xtol: float = 1.0e-6,
     ftol: float = 1.0e-6,
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
-) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
+    meta: bool = False,
+) -> (
+    tuple[NDArray[np.float32], NDArray[np.int32]]
+    | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.int32]]
+):
     """
-    Fit Gaussians to N spectra in parallel using all available CPU cores.
+    Fit a Gaussian to every row of ``spectra`` in parallel, releasing the GIL.
 
-    Equivalent to calling :func:`fit_single_spectrum` for each row of
-    *spectra*, but processed concurrently in Rust via Rayon.  The GIL is
-    released for the duration of the computation.
+    For each row the brightest pixel within ``guide_velocity ± velocity_range`` (km/s) is found,
+    the ``2 * npix + 1`` pixel window around it is normalised by that peak, and a bounded
+    Levenberg-Marquardt Gaussian is fitted to it.
 
     Parameters
     ----------
     spectra:
-        Spectral data, shape ``(N, M)``, C-contiguous float32.
+        Spectral data, shape ``(N, M)``; converted to C-contiguous float32.
     dopp_slit:
-        Doppler velocity grid [km/s], shape ``(n_pixels,)`` — shared across
-        all spectra (same wavelength solution assumed).
+        Doppler velocity of each pixel [km/s]: shape ``(M,)`` when every row shares one grid, or
+        ``(n_slit, M)`` with ``slit_index`` naming the grid row of each spectrum.
     spec_noise:
-        Per-spaxel noise, shape ``(N, M)``, C-contiguous float32.
-    n_pixels:
-        Number of columns to use from the start of *spectra*.  Defaults to
-        the full column count ``spectra.shape[1]``.
-    guide_velocity, velocity_range, npix, npix_slack, dv, width_min,
-    amplitude_rel_min, amplitude_rel_max, width_max, width_guess,
-    xtol, ftol, gtol, max_iter:
-        Same as :func:`fit_single_spectrum`.
+        1-sigma noise per pixel (same units as *spectra*), shape ``(N, M)``.
+    guide_velocities:
+        Expected line-centre velocity [km/s] per row, shape ``(N,)``, or one scalar for all rows.
+        A non-finite guide matches no pixel, so that row returns :data:`FLAG_NO_LOCAL_MAX`.
+    velocity_range:
+        Half-width of the peak search window around the guide [km/s].
+    npix:
+        Half-width of the fitting window around the peak (pixels).
+    npix_slack:
+        Extra pixels added to the search window when vetting the peak; a peak found only in the
+        slack band is rejected.
+    dv:
+        Pixel scale [km/s per pixel]; sets the velocity bounds ``peak ± dv * npix``.
+    width_min, width_max:
+        Bounds on the Gaussian sigma [km/s].
+    width_guess:
+        Initial guess for sigma [km/s].
+    amplitude_rel_min, amplitude_rel_max:
+        Amplitude bounds relative to the detected peak (e.g. 0.1 and 2.0).
+    slit_index:
+        Row of ``dopp_slit`` to use for each spectrum, shape ``(N,)``, int32 values in
+        ``[0, n_slit)``. Required when ``dopp_slit`` has more than one row. For a block with a
+        slit axis, ``np.indices(flux.shape[:-1])[slit_axis].ravel()`` pairs with
+        ``flux.reshape(-1, M)``.
+    xtol, ftol, gtol:
+        Convergence tolerances on the parameter step, the cost-function change and the gradient
+        norm (default 1e-6 each).
+    max_iter:
+        Maximum Levenberg-Marquardt iterations (default 2000).
+    meta:
+        When True, a third return value carries the solver's ``[n_iter, n_fev]`` per row
+        (accepted Levenberg-Marquardt iterations and model evaluations, Jacobian calls
+        included) as int32, ``-1`` where the fit did not run or did not converge.
 
     Returns
     -------
-    fit_results : ndarray, shape (N, 8), float32
-        One result row per input spectrum.  Column layout same as
-        :func:`fit_single_spectrum`.
+    fit_results : ndarray, shape (N, 9), float32
+        One row per spectrum; see the module docstring for the columns. Column 8 holds the
+        quality bits (:data:`QUALITY_UNCONSTRAINED`, :data:`QUALITY_ZERO_ERROR`,
+        :data:`QUALITY_PEGGED`), 0 when none apply and for failed fits.
     indices : ndarray, shape (N, 2), int32
-        ``[:, 0]`` = i_left, ``[:, 1]`` = i_right for each spectrum.
-
+        ``(i_left, i_right)`` of the fitting window per row, half-open, ``(0, 0)`` when no peak
+        was found.
+    counts : ndarray, shape (N, 2), int32
+        Only with ``meta=True``: ``[n_iter, n_fev]`` per row.
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
-    _require_2d_spectra(spectra)
-    n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
-    return _fit_spectra_batch_guided(
+    if spectra.ndim != _SPECTRA_NDIM:
+        msg = "spectra must be a 2-D (N, M) array"
+        raise ValueError(msg)
+    guides = np.asarray(guide_velocities, dtype=np.float32)
+    if guides.ndim == 0:
+        guides = np.full(spectra.shape[0], guides, dtype=np.float32)
+    fits, indices, counts = _fit_spectra_batch(
         spectra,
-        np.ascontiguousarray(dopp_slit, dtype=np.float32),
+        np.ascontiguousarray(np.atleast_2d(np.asarray(dopp_slit, dtype=np.float32))),
         np.ascontiguousarray(spec_noise, dtype=np.float32),
-        np.full(spectra.shape[0], float(guide_velocity), dtype=np.float32),
+        np.ascontiguousarray(guides),
         float(velocity_range),
         int(npix),
         int(npix_slack),
         float(dv),
         float(width_min),
-        n_px,
         float(amplitude_rel_min),
         float(amplitude_rel_max),
         float(width_max),
         float(width_guess),
+        None if slit_index is None else np.ascontiguousarray(slit_index, dtype=np.int32),
         float(xtol),
         float(ftol),
         float(gtol),
         int(max_iter),
     )
+    return (fits, indices, counts) if meta else (fits, indices)
 
 
-def fit_spectra_batch_guided(
+def fit_single_spectrum(
     *,
-    spectra: NDArray[np.float32],
-    dopp_slit: NDArray[np.float32],
-    spec_noise: NDArray[np.float32],
-    guide_velocities: NDArray[np.float32],
-    velocity_range: float,
-    npix: int,
-    npix_slack: int,
-    dv: float,
-    width_min: float,
-    n_pixels: int | None = None,
-    amplitude_rel_min: float,
-    amplitude_rel_max: float,
-    width_max: float,
-    width_guess: float,
-    xtol: float = 1.0e-6,
-    ftol: float = 1.0e-6,
-    gtol: float = 1.0e-6,
-    max_iter: int = 2000,
-) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
+    spectrum: ArrayLike,
+    dopp_slit: ArrayLike,
+    spec_noise: ArrayLike,
+    guide_velocity: float,
+    **options: float,
+) -> (
+    tuple[NDArray[np.float32], tuple[int, int]]
+    | tuple[NDArray[np.float32], tuple[int, int], NDArray[np.int32]]
+):
     """
-    Fit Gaussians to N spectra in parallel with one guide velocity per row.
+    Fit one spectrum; ``options`` are the keyword arguments of :func:`fit_spectra_batch`.
 
-    Same as :func:`fit_spectra_batch`, except ``guide_velocities`` has shape ``(N,)`` and supplies
-    the expected line-centre velocity for each spectrum. A non-finite guide matches no pixel, so
-    that row returns :data:`FLAG_NO_LOCAL_MAX`, as in the C extension.
+    Returns the 9-element result row and the ``(i_left, i_right)`` fitting window, plus the
+    ``[n_iter, n_fev]`` counts with ``meta=True``.
     """
-    spectra = np.ascontiguousarray(spectra, dtype=np.float32)
-    _require_2d_spectra(spectra)
-    n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
-    return _fit_spectra_batch_guided(
-        spectra,
-        np.ascontiguousarray(dopp_slit, dtype=np.float32),
-        np.ascontiguousarray(spec_noise, dtype=np.float32),
-        np.ascontiguousarray(guide_velocities, dtype=np.float32),
-        float(velocity_range),
-        int(npix),
-        int(npix_slack),
-        float(dv),
-        float(width_min),
-        n_px,
-        float(amplitude_rel_min),
-        float(amplitude_rel_max),
-        float(width_max),
-        float(width_guess),
-        float(xtol),
-        float(ftol),
-        float(gtol),
-        int(max_iter),
+    meta = options.pop("meta", False)
+    fits, indices, counts = fit_spectra_batch(
+        spectra=np.asarray(spectrum, dtype=np.float32)[np.newaxis],
+        dopp_slit=dopp_slit,
+        spec_noise=np.asarray(spec_noise, dtype=np.float32)[np.newaxis],
+        guide_velocities=guide_velocity,
+        meta=True,
+        **options,
     )
+    window = (int(indices[0, 0]), int(indices[0, 1]))
+    return (fits[0], window, counts[0]) if meta else (fits[0], window)
 
 
-def fit_gaussian_f32(
+def fit_gaussian(
     *,
-    x: NDArray[np.float32],
-    y: NDArray[np.float32],
-    error: NDArray[np.float32],
-    initial: NDArray[np.float32],
-    lower_bounds: NDArray[np.float32],
-    upper_bounds: NDArray[np.float32],
+    x: ArrayLike,
+    y: ArrayLike,
+    error: ArrayLike,
+    initial: ArrayLike,
+    lower_bounds: ArrayLike,
+    upper_bounds: ArrayLike,
     xtol: float = 1.0e-6,
     ftol: float = 1.0e-6,
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
-) -> NDArray[np.float32]:
+    meta: bool = False,
+) -> NDArray[np.float32] | tuple[NDArray[np.float32], NDArray[np.int32]]:
     """
-    Fit a bounded Gaussian to (x, y ± error) data using the Rust backend.
-
-    Uses a Levenberg-Marquardt solver with box constraints on all three
-    parameters (amplitude, mean, sigma).
+    Fit a bounded Gaussian ``amp * exp(-0.5 * ((x - mean) / sigma)**2)`` to ``(x, y ± error)``.
 
     Parameters
     ----------
-    x:
-        Independent variable, shape ``(N,)``, float32.  Must have at least 3
-        elements.
-    y:
-        Observed values, shape ``(N,)``, float32.
-    error:
-        1-sigma uncertainties on *y*, shape ``(N,)``, float32.  All values
-        must be finite and positive.
+    x, y, error:
+        Samples, shape ``(N,)`` with ``N >= 3``; all finite, ``error`` positive. Converted to
+        float32; the solve itself runs in float64.
     initial:
-        Starting guess ``[amplitude, mean, sigma]``, shape ``(3,)``.
-    lower_bounds:
-        Lower bounds ``[amp_min, mean_min, sigma_min]``, shape ``(3,)``.
-    upper_bounds:
-        Upper bounds ``[amp_max, mean_max, sigma_max]``, shape ``(3,)``.
-    xtol:
-        Convergence tolerance on the parameter step size.
-    ftol:
-        Convergence tolerance on the cost-function change.
-    gtol:
-        Convergence tolerance on the gradient norm.
-    max_iter:
-        Maximum number of outer LM iterations.
+        Starting guess ``[amplitude, mean, sigma]``, clamped into the bounds.
+    lower_bounds, upper_bounds:
+        Bounds on ``[amplitude, mean, sigma]``; finite, increasing, and ``sigma > 0`` at the lower
+        end.
+    xtol, ftol, gtol, max_iter, meta:
+        As in :func:`fit_spectra_batch`.
 
     Returns
     -------
     ndarray, shape (8,), float32
-        ``[amplitude, mean, sigma, amplitude_err, mean_err, sigma_err,
-        reduced_chi2, flag]``.  *flag* is :data:`FLAG_SUCCESS` (0) on
-        convergence or :data:`FLAG_NO_CONVERGENCE` (2) otherwise.
+        ``[amplitude, mean, sigma, amplitude_err, mean_err, sigma_err, reduced_chi2, flag]``;
+        *flag* is :data:`FLAG_SUCCESS` or :data:`FLAG_NO_CONVERGENCE`, and everything else is NaN
+        when it is not success. With ``meta=True`` a second value holds ``[n_iter, n_fev]``.
     """
-    return _fit_gaussian_f32(
+    row = _fit_gaussian(
         np.ascontiguousarray(x, dtype=np.float32),
         np.ascontiguousarray(y, dtype=np.float32),
         np.ascontiguousarray(error, dtype=np.float32),
@@ -410,3 +341,4 @@ def fit_gaussian_f32(
         float(gtol),
         int(max_iter),
     )
+    return (row[:8], row[8:].astype(np.int32)) if meta else row[:8]

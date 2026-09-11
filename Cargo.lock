@@ -43,7 +43,6 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 name = "gaussfit-rs"
 version = "1.2.0"
 dependencies = [
- "num-traits",
  "numpy",
  "pyo3",
  "rayon",
