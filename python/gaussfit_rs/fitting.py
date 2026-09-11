@@ -123,7 +123,8 @@ def fit_single_spectrum(
     ftol: float = 1.0e-6,
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
-) -> tuple[NDArray[np.float32], tuple[int, int]]:
+    quality: bool = False,
+) -> tuple[NDArray[np.float32], tuple[int, int]] | tuple[NDArray[np.float32], tuple[int, int], int]:
     """
     Fit a single Gaussian to one spectrum using the Rust backend.
 
@@ -173,6 +174,13 @@ def fit_single_spectrum(
         Convergence tolerance on the gradient norm (default 1e-6).
     max_iter:
         Maximum LM iterations (default 2000).
+    quality:
+        When True, also return a 0/1 unconstrained-fit flag: 1 when the fit
+        succeeded but a parameter's formal error is not smaller than the
+        interval that parameter was bounded to, i.e. the data do not constrain
+        it.  The flag is 0 for failed fits; use the result flag column for those.
+        Defaults to False.  See "Opt-In Unconstrained-Fit Indicator" in the
+        design notes.
 
     Returns
     -------
@@ -203,6 +211,7 @@ def fit_single_spectrum(
         float(ftol),
         float(gtol),
         int(max_iter),
+        bool(quality),
     )
 
 
@@ -235,7 +244,11 @@ def fit_spectra_batch(
     ftol: float = 1.0e-6,
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
-) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
+    quality: bool = False,
+) -> (
+    tuple[NDArray[np.float32], NDArray[np.int32]]
+    | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.uint8]]
+):
     """
     Fit Gaussians to N spectra in parallel using all available CPU cores.
 
@@ -257,7 +270,7 @@ def fit_spectra_batch(
         the full column count ``spectra.shape[1]``.
     guide_velocity, velocity_range, npix, npix_slack, dv, width_min,
     amplitude_rel_min, amplitude_rel_max, width_max, width_guess,
-    xtol, ftol, gtol, max_iter:
+    xtol, ftol, gtol, max_iter, quality:
         Same as :func:`fit_single_spectrum`.
 
     Returns
@@ -267,6 +280,9 @@ def fit_spectra_batch(
         :func:`fit_single_spectrum`.
     indices : ndarray, shape (N, 2), int32
         ``[:, 0]`` = i_left, ``[:, 1]`` = i_right for each spectrum.
+    quality_flags : ndarray, shape (N,), uint8
+        Present only when ``quality=True``: 1 where the fit succeeded but is not
+        constrained by the data, 0 otherwise.
 
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
@@ -291,6 +307,7 @@ def fit_spectra_batch(
         float(ftol),
         float(gtol),
         int(max_iter),
+        bool(quality),
     )
 
 
@@ -314,7 +331,11 @@ def fit_spectra_batch_guided(
     ftol: float = 1.0e-6,
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
-) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
+    quality: bool = False,
+) -> (
+    tuple[NDArray[np.float32], NDArray[np.int32]]
+    | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.uint8]]
+):
     """
     Fit Gaussians to N spectra in parallel with one guide velocity per row.
 
@@ -344,6 +365,7 @@ def fit_spectra_batch_guided(
         float(ftol),
         float(gtol),
         int(max_iter),
+        bool(quality),
     )
 
 

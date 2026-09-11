@@ -20,9 +20,12 @@ CHI_ATOL = 5e-3  # reduced chi-square of noise-free fits is rounding noise
 MIN_CONSTRAINED = 0.5  # fraction of successful fits whose errors must be comparable
 
 
-def fit_fixture(ref):
+def fit_fixture(ref, *, quality=False):
     """
     Fit every spectrum of a recorded C-reference fixture with the Rust backend.
+
+    With ``quality=True`` the opt-in unconstrained-fit flags are returned as a third value, so
+    figure tests can show them alongside the parameters.
     """
     params = {key: cast(ref[key]) for key, cast in FIT_KEYS.items()}
     return fit_spectra_batch_guided(
@@ -31,6 +34,7 @@ def fit_fixture(ref):
         spec_noise=ref["noise"],
         guide_velocities=ref["guides"],
         dv=float(np.median(np.gradient(ref["dopp"]))),
+        quality=quality,
         **params,
     )
 

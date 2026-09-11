@@ -184,14 +184,20 @@ are hundreds of km/s. The "68 of 82,368 corpus fits move onto C's values" figure
 100-seed corpus measurement, not this pipeline data.
 Still worth doing: report the deviation upstream (it exists in released rmpfit).
 
-### B5 Unconstrained fits are reported as successes [decision needed]
-8-9 % of pixels (10,876 in `mom_gt_noise`, 11,382 in `mom_gfat`, 7,796 in
-`mom_inv`) carry a median `error_velocity` of 200-244 km/s, yet **both** backends
-return FLAG_SUCCESS and the pipeline propagates them into the moments and area
-statistics (the amplitude there is 2.6-3.6 against 17.8-18.9 overall). Decide
-whether to add an opt-in "unconstrained fit" indicator — error/value ratio,
-`error > width_max`, or an amplitude-significance test — as an extra column, so
-consumers can mask them without breaking the 8-column parity contract.
+### B5 Unconstrained fits — **opt-in indicator implemented** 2026-09-11
+8-9 % of pixels (10,876 in `mom_gt_noise`, 11,382 in `mom_gfat`, 7,796 in `mom_inv`) carry a
+median `error_velocity` of 200-244 km/s while **both** backends return FLAG_SUCCESS and the
+pipeline propagates them into the moments and area statistics (amplitude there 2.6-3.6 against
+17.8-18.9 overall). `quality=True` on the three spectrum entry points now returns an extra
+unconstrained-fit indicator: 1 when a parameter's formal 1σ error is not smaller than the interval
+that parameter was fitted in (amplitude span in peak-normalised units, `2*dv*npix` for velocity,
+`width_max - width_min` for linewidth), 0 otherwise and for failed fits. Default off, so the
+8-column contract and the parity corpus are untouched. Documented in `docs/userguide.rst` and
+"Opt-In Unconstrained-Fit Indicator" in `docs/design-notes.rst`; pinned by
+`src/tests/spectrum.rs::quality_flag_separates_constrained_and_unconstrained_fits`,
+`python/gaussfit_rs/tests/test_fit_single_spectrum.py` and the figure suite
+(`test_quality_per_family`, `UNC` markers in the galleries).
+Follow-up (muse side): decide whether `sdc_benchmark` should consume the flag.
 
 ## 4. The carlos_dev C++ prototype: faster per row, still not worth adopting
 

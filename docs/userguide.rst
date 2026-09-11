@@ -120,6 +120,29 @@ Use :class:`~gaussfit_rs.FitResult` to unpack by name:
    r.sigma         # float [km/s]
    r.converged     # bool
 
+Opt-in unconstrained-fit indicator
+----------------------------------
+
+``fit_single_spectrum``, ``fit_spectra_batch`` and ``fit_spectra_batch_guided`` accept
+``quality=True``, which appends one element to the returned tuple:
+
+* single spectrum: ``(fit_results, window, unconstrained)``
+* batch: ``(fit_results, indices, unconstrained)``, a ``uint8`` array of shape ``(N,)``
+
+``unconstrained`` is 1 when the fit succeeded but the data do not constrain it: a parameter's
+formal 1-sigma error is not smaller than the interval that parameter was fitted in —
+
+* amplitude: normalised amplitude error >= ``amplitude_rel_max - amplitude_rel_min``
+* velocity: error >= ``2 * dv * npix``
+* linewidth: error >= ``width_max - width_min``
+
+— and 0 otherwise, including for failed fits (use the flag column for those).  It is off by
+default, so result arity and numerics are unchanged for existing callers.
+
+``quality=True`` is how a consumer masks or down-weights the spaxels that fit "successfully" with
+velocity errors of hundreds of km/s; on a full MUSE run those are 8-9 % of spaxels.  See
+"Opt-In Unconstrained-Fit Indicator" in the design notes for the measurement.
+
 Input validation and tolerances
 -------------------------------
 

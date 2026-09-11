@@ -278,3 +278,67 @@ def test_nonfinite_guide_reports_no_local_max(guide):
     assert fits[0, 7] == FLAG_NO_LOCAL_MAX
     assert fits[1, 7] == FLAG_SUCCESS
     np.testing.assert_array_equal(idx[0], [0, 0])
+
+
+def test_quality_flag_is_opt_in_and_reports_unconstrained_successes():
+    """
+    ``quality=True`` adds the documented unconstrained-fit indicator; default calls are unchanged.
+    """
+    v, spec, err = _make_spectrum(amp=1.0, noise=0.05)
+
+    plain = fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, **COMMON_KW)
+    assert len(plain) == 2  # opt-in: the default arity is unchanged
+
+    fits, _, flag = fit_single_spectrum(
+        spectrum=spec, dopp_slit=v, spec_noise=err, quality=True, **COMMON_KW
+    )
+    assert fits[7] == FLAG_SUCCESS
+    assert flag == 0  # a real line constrains its parameters
+
+    # A faint line over structured noise fits "successfully" but is not constrained by the data:
+    # its amplitude error exceeds the interval the parameter was bounded to.
+    saw = 3.0 * ((np.arange(v.size) % 5) - 2.0)
+    faint = (0.5 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2) + saw).astype(np.float32)
+    faint_err = np.full(v.size, 3.0, dtype=np.float32)
+    fits_u, _, flag_u = fit_single_spectrum(
+        spectrum=faint, dopp_slit=v, spec_noise=faint_err, quality=True, **COMMON_KW
+    )
+    assert fits_u[7] == FLAG_SUCCESS
+    assert flag_u == 1
+
+    # Failed fits are reported by the result flag, not the indicator.
+    flat = np.full(v.size, -1.0, dtype=np.float32)
+    fits_f, _, flag_f = fit_single_spectrum(
+        spectrum=flat, dopp_slit=v, spec_noise=err, quality=True, **COMMON_KW
+    )
+    assert fits_f[7] == FLAG_NO_LOCAL_MAX
+    assert flag_f == 0
+
+
+def test_batch_quality_flags_match_the_documented_criterion():
+    """
+    The batch indicator equals the documented velocity/width span test on the returned errors.
+    """
+    v, spec, err = _make_spectrum(amp=1.0, noise=0.05)
+    checker = np.where(np.arange(v.size) % 2 == 0, 3.0, -3.0)
+    noisy = (0.5 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2) + checker).astype(np.float32)
+    spectra = np.stack([spec, noisy])
+    noises = np.stack([err, np.full(v.size, 3.0, dtype=np.float32)])
+
+    plain = fit_spectra_batch(spectra=spectra, dopp_slit=v, spec_noise=noises, **COMMON_KW)
+    assert len(plain) == 2
+
+    fits, indices, flags = fit_spectra_batch(
+        spectra=spectra, dopp_slit=v, spec_noise=noises, quality=True, **COMMON_KW
+    )
+    assert flags.dtype == np.uint8
+    assert flags.shape == (2,)
+    assert indices.shape == (2, 2)
+    assert fits[0, 7] == FLAG_SUCCESS
+    assert flags[0] == 0
+    assert flags[1] == 1
+
+    span_velocity = 2.0 * COMMON_KW["dv"] * COMMON_KW["npix"]
+    span_width = COMMON_KW["width_max"] - COMMON_KW["width_min"]
+    derived = ((fits[:, 4] >= span_velocity) | (fits[:, 5] >= span_width)).astype(np.uint8)
+    assert np.array_equal(flags, derived)

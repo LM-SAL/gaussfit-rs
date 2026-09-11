@@ -216,3 +216,36 @@ fn negative_peak_returns_no_local_max() {
 
     assert_eq!(result.fit_results[7], FLAG_NO_LOCAL_MAX);
 }
+
+#[test]
+fn quality_flag_separates_constrained_and_unconstrained_fits() {
+    // Opt-in "unconstrained" indicator: a parameter whose formal error is not
+    // smaller than the interval it was bounded to. A clean line is constrained;
+    // a noise-only spectrum is not. See "Opt-In Unconstrained-Fit Indicator" in
+    // docs/design-notes.rst.
+    let v = velocity_grid(60, -300.0, 600.0 / 59.0);
+    let clean = fit_clean_spectrum_with_noise(
+        &v,
+        &gaussian_spectrum(&v, 1.0, 0.0, SIGMA_TRUE),
+        &vec![0.05; v.len()],
+    );
+    assert_eq!(clean.fit_results[7], FLAG_SUCCESS);
+    assert_eq!(clean.unconstrained, 0);
+
+    // A faint line over structured noise: the fit succeeds, but its amplitude
+    // error is larger than the bound span, so it is reported unconstrained.
+    let saw: Vec<f32> = (0..v.len()).map(|i| 3.0 * ((i % 5) as f32 - 2.0)).collect();
+    let faint: Vec<f32> = v
+        .iter()
+        .zip(&saw)
+        .map(|(&x, &offset)| 0.5 * (-0.5 * (x / SIGMA_TRUE).powi(2)).exp() + offset)
+        .collect();
+    let unconstrained = fit_clean_spectrum_with_noise(&v, &faint, &vec![3.0; v.len()]);
+    assert_eq!(unconstrained.fit_results[7], FLAG_SUCCESS);
+    assert_eq!(unconstrained.unconstrained, 1);
+
+    // Failed fits are excluded from the indicator; the result flag reports them.
+    let failed = fit_clean_spectrum_with_noise(&v, &vec![-1.0; v.len()], &vec![0.05; v.len()]);
+    assert_eq!(failed.fit_results[7], FLAG_NO_LOCAL_MAX);
+    assert_eq!(failed.unconstrained, 0);
+}
