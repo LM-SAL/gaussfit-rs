@@ -1,0 +1,453 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -403,11 +403,52 @@
+     where
+         Self: Sized,
+     {
++        // gaussfit-rs local patch (see VENDORED.md): run through a fresh
++        // workspace, then fill in the residuals, covariance and errors that
++        // upstream's terminate() built (see MPWorkspace for where they live).
++        let mut ws = MPWorkspace::default();
++        let mut status = self.mpfit_with_workspace(xall, &mut ws)?;
++        let (m, npar, nfree) = (status.n_func, status.n_par, status.n_free);
++        status.covar = vec![0.; npar * npar];
++        for j in 0..nfree {
++            let k = ws.ifree[j] * npar;
++            let l = j * m;
++            for i in 0..nfree {
++                status.covar[k + ws.ifree[i]] = ws.fjac[l + i]
++            }
++        }
++        status.xerror = vec![0.; npar];
++        for j in 0..nfree {
++            let cc = ws.fjac[j * m + j];
++            if cc > 0. {
++                status.xerror[ws.ifree[j]] = cc.sqrt();
++            }
++        }
++        status.resid = ws.fvec;
++        Ok(status)
++    }
++
++    /// [`MPFitter::mpfit`] with caller-owned buffers.
++    ///
++    /// gaussfit-rs local patch (see VENDORED.md). Every heap buffer the fit
++    /// needs is borrowed from `ws` and left there, grown to this problem's
++    /// size, so repeated fits of similar problems allocate nothing. The
++    /// returned status has empty `resid`, `xerror` and `covar`: the final
++    /// residuals and the covariance stay in the workspace (see
++    /// [`MPWorkspace`]); call [`MPFitter::mpfit`] to get them in the status.
++    fn mpfit_with_workspace(
++        &mut self,
++        xall: &mut [f64],
++        ws: &mut MPWorkspace,
++    ) -> MPResult<MPStatus>
++    where
++        Self: Sized,
++    {
+         // Clone once so the immutable borrow ends before we pass `self` mutably
+         // into MPFit.  Users returning &self.config avoid constructing a new
+         // value; users using the default return a &'static so the clone is cheap.
+         let config = self.config().clone();
+-        let mut fit = MPFit::new(self, xall, &config)?;
++        let mut fit = MPFit::new(self, xall, &config, ws)?;
+         fit.check_config()?;
+         fit.parse_params()?;
+         fit.init_lm()?;
+@@ -451,17 +492,21 @@
+ /// f64::MAX.sqrt() * 0.1
+ const MP_RGIANT: f64 = 1.3407807799935083e+153;
+ 
+-/// Internal structure to hold calculated values.
+-struct MPFit<'a, T: MPFitter> {
+-    m: usize,
+-    npar: usize,
+-    nfree: usize,
++/// Reusable solver buffers for [`MPFitter::mpfit_with_workspace`].
++///
++/// gaussfit-rs local patch (see VENDORED.md). Holds every heap buffer a fit
++/// needs. A fit borrows them, grows them to its own size (never shrinking
++/// them) and leaves them behind, so a caller fitting many problems of similar
++/// size through one workspace allocates only for the first. After a fit the
++/// final residuals are in `fvec` and the covariance of the free parameters in
++/// `fjac`, with the number of residuals as leading dimension; that is where
++/// [`MPFitter::mpfit`] reads them from.
++#[derive(Debug, Default)]
++pub struct MPWorkspace {
+     ifree: Vec<usize>,
+     fvec: Vec<f64>,
+-    nfev: usize,
+     xnew: Vec<f64>,
+     x: Vec<f64>,
+-    xall: &'a mut [f64],
+     qtf: Vec<f64>,
+     fjac: Vec<f64>,
+     step: Vec<f64>,
+@@ -474,14 +519,53 @@
+     qulim: Vec<bool>,
+     llim: Vec<f64>,
+     ulim: Vec<f64>,
+-    qanylim: bool,
+-    f: &'a mut T,
+     wa1: Vec<f64>,
+     wa2: Vec<f64>,
+     wa3: Vec<f64>,
+     wa4: Vec<f64>,
+     ipvt: Vec<usize>,
+     diag: Vec<f64>,
++    derivs: Vec<Option<Vec<f64>>>,
++}
++
++/// Internal structure to hold calculated values.
++///
++/// gaussfit-rs local patch (see VENDORED.md): every buffer is borrowed from
++/// an [`MPWorkspace`] instead of being allocated per fit; the arithmetic below
++/// is unchanged.
++struct MPFit<'a, T: MPFitter> {
++    m: usize,
++    npar: usize,
++    nfree: usize,
++    ifree: &'a mut Vec<usize>,
++    fvec: &'a mut Vec<f64>,
++    nfev: usize,
++    xnew: &'a mut Vec<f64>,
++    x: &'a mut Vec<f64>,
++    xall: &'a mut [f64],
++    qtf: &'a mut Vec<f64>,
++    fjac: &'a mut Vec<f64>,
++    step: &'a mut Vec<f64>,
++    dstep: &'a mut Vec<f64>,
++    dside: &'a mut Vec<MPSide>,
++    dderiv_debug: &'a mut Vec<bool>,
++    dderiv_reltol: &'a mut Vec<f64>,
++    dderiv_abstol: &'a mut Vec<f64>,
++    qllim: &'a mut Vec<bool>,
++    qulim: &'a mut Vec<bool>,
++    llim: &'a mut Vec<f64>,
++    ulim: &'a mut Vec<f64>,
++    qanylim: bool,
++    f: &'a mut T,
++    wa1: &'a mut Vec<f64>,
++    wa2: &'a mut Vec<f64>,
++    wa3: &'a mut Vec<f64>,
++    wa4: &'a mut Vec<f64>,
++    ipvt: &'a mut Vec<usize>,
++    diag: &'a mut Vec<f64>,
++    /// Analytical derivative columns, one `Some` per analytical (or debugged)
++    /// free parameter, reused by every Jacobian evaluation.
++    derivs: &'a mut Vec<Option<Vec<f64>>>,
+     fnorm: f64,
+     fnorm1: f64,
+     xnorm: f64,
+@@ -495,54 +579,120 @@
+ }
+ 
+ impl<'a, F: MPFitter> MPFit<'a, F> {
+-    fn new(f: &'a mut F, xall: &'a mut [f64], cfg: &'a MPConfig) -> MPResult<MPFit<'a, F>> {
++    fn new(
++        f: &'a mut F,
++        xall: &'a mut [f64],
++        cfg: &'a MPConfig,
++        ws: &'a mut MPWorkspace,
++    ) -> MPResult<MPFit<'a, F>> {
+         let m = f.number_of_points();
+         let npar = xall.len();
+         if m == 0 {
+-            Err(MPError::Empty)
+-        } else {
+-            Ok(MPFit {
+-                m,
+-                npar,
+-                nfree: 0,
+-                ifree: vec![],
+-                fvec: vec![0.; m],
+-                nfev: 1,
+-                xnew: vec![0.; npar],
+-                x: vec![],
+-                xall,
+-                qtf: vec![],
+-                fjac: vec![],
+-                step: vec![],
+-                dstep: vec![],
+-                dside: vec![],
+-                dderiv_debug: vec![],
+-                dderiv_reltol: vec![],
+-                dderiv_abstol: vec![],
+-                qllim: vec![],
+-                qulim: vec![],
+-                llim: vec![],
+-                ulim: vec![],
+-                qanylim: false,
+-                f,
+-                wa1: vec![0.; npar],
+-                wa2: vec![0.; m],
+-                wa3: vec![0.; npar],
+-                wa4: vec![0.; m],
+-                ipvt: vec![0; npar],
+-                diag: vec![0.; npar],
+-                fnorm: -1.0,
+-                fnorm1: -1.0,
+-                xnorm: -1.0,
+-                delta: 0.0,
+-                info: MPSuccess::NotDone,
+-                orig_norm: 0.0,
+-                par: 0.0,
+-                iter: 1,
+-                maxfev: 0,
+-                cfg,
+-            })
++            return Err(MPError::Empty);
+         }
++        // gaussfit-rs local patch (see VENDORED.md): reset each workspace
++        // buffer to what a fresh allocation held (zeroed at its fixed size, or
++        // empty to be pushed into). `derivs` is sized in init_lm, where its
++        // columns are kept rather than dropped.
++        let MPWorkspace {
++            ifree,
++            fvec,
++            xnew,
++            x,
++            qtf,
++            fjac,
++            step,
++            dstep,
++            dside,
++            dderiv_debug,
++            dderiv_reltol,
++            dderiv_abstol,
++            qllim,
++            qulim,
++            llim,
++            ulim,
++            wa1,
++            wa2,
++            wa3,
++            wa4,
++            ipvt,
++            diag,
++            derivs,
++        } = ws;
++        for buffer in [
++            &mut *x,
++            &mut *qtf,
++            &mut *fjac,
++            &mut *step,
++            &mut *dstep,
++            &mut *dderiv_reltol,
++            &mut *dderiv_abstol,
++            &mut *llim,
++            &mut *ulim,
++        ] {
++            buffer.clear();
++        }
++        ifree.clear();
++        dside.clear();
++        dderiv_debug.clear();
++        qllim.clear();
++        qulim.clear();
++        for (buffer, len) in [
++            (&mut *fvec, m),
++            (&mut *xnew, npar),
++            (&mut *wa1, npar),
++            (&mut *wa2, m),
++            (&mut *wa3, npar),
++            (&mut *wa4, m),
++            (&mut *diag, npar),
++        ] {
++            buffer.clear();
++            buffer.resize(len, 0.);
++        }
++        ipvt.clear();
++        ipvt.resize(npar, 0);
++        Ok(MPFit {
++            m,
++            npar,
++            nfree: 0,
++            ifree,
++            fvec,
++            nfev: 1,
++            xnew,
++            x,
++            xall,
++            qtf,
++            fjac,
++            step,
++            dstep,
++            dside,
++            dderiv_debug,
++            dderiv_reltol,
++            dderiv_abstol,
++            qllim,
++            qulim,
++            llim,
++            ulim,
++            qanylim: false,
++            f,
++            wa1,
++            wa2,
++            wa3,
++            wa4,
++            ipvt,
++            diag,
++            derivs,
++            fnorm: -1.0,
++            fnorm1: -1.0,
++            xnorm: -1.0,
++            delta: 0.0,
++            info: MPSuccess::NotDone,
++            orig_norm: 0.0,
++            par: 0.0,
++            iter: 1,
++            maxfev: 0,
++            cfg,
++        })
+     }
+ 
+     //     subroutine fdjac2
+@@ -623,23 +773,21 @@
+         let has_analytical = self
+             .dside
+             .iter()
+-            .zip(&self.dderiv_debug)
++            .zip(self.dderiv_debug.iter())
+             .any(|(s, d)| *s == MPSide::User || *d);
+         if has_analytical {
+             let m = self.m;
+-            let npar = self.npar;
+-            let mut derivs: Vec<Option<Vec<f64>>> = vec![None; npar];
+-            for j in 0..self.nfree {
+-                let free_p = self.ifree[j];
+-                if self.dside[j] == MPSide::User || self.dderiv_debug[j] {
+-                    derivs[free_p] = Some(vec![0.0; m]);
+-                }
++            // gaussfit-rs local patch (see VENDORED.md): the columns were
++            // allocated in init_lm; zero them so the user sees the same fresh
++            // buffers a per-call allocation gave, without the heap round trip.
++            for col in self.derivs.iter_mut().flatten() {
++                col.fill(0.0);
+             }
+-            self.f.jacobian(&self.xnew, &mut self.wa4, &mut derivs)?;
++            self.f.jacobian(&self.xnew, &mut self.wa4, &mut self.derivs)?;
+             self.nfev += 1;
+             for j in 0..self.nfree {
+                 let free_p = self.ifree[j];
+-                if let Some(ref col) = derivs[free_p] {
++                if let Some(ref col) = self.derivs[free_p] {
+                     let base = j * m;
+                     self.fjac[base..base + m].copy_from_slice(col);
+                 }
+@@ -909,11 +1057,13 @@
+         if pars.is_empty() {
+             // No constraints: every parameter is free with default derivative settings.
+             self.nfree = self.npar;
+-            self.ifree = (0..self.npar).collect();
+-            self.dside = vec![MPSide::Auto; self.npar];
+-            self.dderiv_debug = vec![false; self.npar];
+-            self.dderiv_reltol = vec![0.0; self.npar];
+-            self.dderiv_abstol = vec![0.0; self.npar];
++            // gaussfit-rs local patch (see VENDORED.md): fill the workspace
++            // buffers (emptied in new) instead of allocating.
++            self.ifree.extend(0..self.npar);
++            self.dside.resize(self.npar, MPSide::Auto);
++            self.dderiv_debug.resize(self.npar, false);
++            self.dderiv_reltol.resize(self.npar, 0.0);
++            self.dderiv_abstol.resize(self.npar, 0.0);
+         } else {
+             pars.iter().enumerate().for_each(|(i, p)| {
+                 if !p.fixed {
+@@ -972,12 +1122,33 @@
+         self.fnorm = self.fvec.enorm();
+         self.orig_norm = self.fnorm * self.fnorm;
+         self.xnew.copy_from_slice(self.xall);
+-        self.x = Vec::with_capacity(self.nfree);
++        // gaussfit-rs local patch (see VENDORED.md): x, qtf and fjac come from
++        // the workspace (emptied in new) instead of being allocated here.
+         for i in 0..self.nfree {
+             self.x.push(self.xall[self.ifree[i]]);
+         }
+-        self.qtf = vec![0.; self.nfree];
+-        self.fjac = vec![0.; self.m * self.nfree];
++        self.qtf.resize(self.nfree, 0.);
++        self.fjac.resize(self.m * self.nfree, 0.);
++        // gaussfit-rs local patch (see VENDORED.md): one derivative column per
++        // analytical (or debugged) free parameter, reused by every fdjac2 call
++        // and kept in the workspace across fits. ifree is ascending, so one
++        // pass pairs each parameter with its free index.
++        self.derivs.resize(self.npar, None);
++        let mut j = 0;
++        for p in 0..self.npar {
++            let free = j < self.nfree && self.ifree[j] == p;
++            let analytical = free && (self.dside[j] == MPSide::User || self.dderiv_debug[j]);
++            if free {
++                j += 1;
++            }
++            if analytical {
++                let col = self.derivs[p].get_or_insert_with(Vec::new);
++                col.clear();
++                col.resize(self.m, 0.0);
++            } else {
++                self.derivs[p] = None;
++            }
++        }
+         Ok(())
+     }
+ 
+@@ -1068,7 +1239,7 @@
+     /// has been reduced to a (small) square matrix, and the test is O(N^2).
+     fn check_is_finite(&self) -> bool {
+         if !self.cfg.no_finite_check {
+-            for val in &self.fjac {
++            for val in self.fjac.iter() {
+                 if !val.is_finite() {
+                     return false;
+                 }
+@@ -1115,23 +1286,11 @@
+                     || (p.limited_up && p.limit_up == self.xall[*i])
+             })
+             .count();
+-        /* Compute and return the covariance matrix and/or parameter errors */
++        /* Compute the covariance matrix; it stays in fjac (see MPWorkspace).
++         * gaussfit-rs local patch (see VENDORED.md): the per-parameter copies
++         * upstream built here are made by MPFitter::mpfit instead, so this
++         * path allocates nothing. */
+         self = self.covar();
+-        let mut covar = vec![0.; self.npar * self.npar];
+-        for j in 0..self.nfree {
+-            let k = self.ifree[j] * self.npar;
+-            let l = j * self.m;
+-            for i in 0..self.nfree {
+-                covar[k + self.ifree[i]] = self.fjac[l + i]
+-            }
+-        }
+-        let mut xerror = vec![0.; self.npar];
+-        for j in 0..self.nfree {
+-            let cc = self.fjac[j * self.m + j];
+-            if cc > 0. {
+-                xerror[self.ifree[j]] = cc.sqrt();
+-            }
+-        }
+         let best_norm = self.fnorm.max(self.fnorm1);
+         Ok(MPStatus {
+             success: self.info,
+@@ -1143,9 +1302,9 @@
+             n_free: self.nfree,
+             n_pegged,
+             n_func: self.m,
+-            resid: self.fvec,
+-            xerror,
+-            covar,
++            resid: Vec::new(),
++            xerror: Vec::new(),
++            covar: Vec::new(),
+         })
+     }
+ 
+@@ -1210,7 +1369,7 @@
+     //
+     //    argonne national laboratory. minpack project. august 1980.
+     //    burton s. garbow, kenneth e. hillstrom, jorge j. more
+-    fn covar(mut self) -> Self {
++    fn covar(self) -> Self {
+         /*
+          * form the inverse of r in the full upper triangle of r.
+          */
