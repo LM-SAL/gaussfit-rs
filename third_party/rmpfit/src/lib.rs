@@ -1477,7 +1477,9 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
          *     set par to the closer endpoint.
          */
         self.par = self.par.max(parl);
-        self.par = self.par.max(paru);
+        // gaussfit-rs local patch (see VENDORED.md): CMPFIT/MINPACK clamp the
+        // upper end with min, upstream rmpfit uses max here, a port deviation.
+        self.par = self.par.min(paru);
         if self.par == 0. {
             self.par = gnorm / dxnorm;
         }

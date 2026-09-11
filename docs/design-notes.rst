@@ -104,12 +104,44 @@ as well). New rmpfit releases must therefore be checked by hand; ``VENDORED.md``
 has the update procedure, and the tests above decide when the patch can be
 dropped.
 
-rmpfit's ``lmpar`` also clamps ``par`` with ``max(paru)`` where CMPFIT and
-MINPACK use ``min``. That is a separate port deviation, reported upstream and
-deliberately not patched here. Correcting it on top of the snap fix changes 69
-of 82,368 fits over 100 seeds: 68 move onto the C reference's values within
-tolerance, and one low-SNR fit (``muse`` seed 44) moves to a different local
-minimum, reduced chi-square 0.804 against C's 0.755, which fails the one-sided
-gate. No fit improves measurably, so the correction is not worth an exception
-in the contract. An upstream release that corrects ``lmpar`` will trip the gate
-on that row.
+``lmpar`` Trust-Region Clamp
+----------------------------
+
+- **Status:** resolved 2026-09-11 by patching the vendored solver.
+- **Owner:** Nabil Freij.
+- **Code:** ``third_party/rmpfit/src/lib.rs`` (the clamp in ``lmpar``), carried
+  as ``third_party/rmpfit/lmpar-clamp.patch``; documented in ``VENDORED.md``.
+- **Tests encoding current behavior:**
+  ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension``
+  (``muse`` seed 44, family ``low_snr``, carries the named exception).
+
+Current Behavior
+~~~~~~~~~~~~~~~~
+
+rmpfit clamps the trust-region radius with ``self.par = self.par.max(paru)``
+where CMPFIT and MINPACK clamp the upper end with ``min`` (C reference:
+``third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102``). Every other line of the
+``lmpar`` clamp/update sequence matches, so this is a one-token port deviation,
+now corrected locally.
+
+Tradeoff
+~~~~~~~~
+
+Measured effect over 100 seeds (82,368 corpus fits): 68 fits move onto the C
+reference's values within tolerance, and one low-SNR fit (``muse`` seed 44,
+family ``low_snr``, absolute row 165) moves to a different local minimum, reduced
+chi-square 0.804337 against C's 0.755257 (1.065x). That single row is carried as
+a **named exception** rather than a wider tolerance: ``ACCEPTED_WORSE`` in
+``python/gaussfit_rs/tests/test_c_parity.py``, capped at 1.10x, restricted to
+that row so the other 39 low-SNR rows stay under the gate, and asserted to be
+taken exactly once, so the exception cannot silently go stale and the one-sided
+contract stays meaningful everywhere else.
+
+On a full MUSE run (2026-09-11) the change is close to chi-square-neutral and
+slightly closer to the C reference: the clean GT product is bit-identical, the
+gate's 0.5 % chi-square criterion is never newly violated, and roughly two thirds
+of the pixels whose fits change move toward C. Per-product measurements, and the
+provenance for the pipeline data they come from, are in
+``docs/improvement-todos.md`` (B4); they are not repeated here because the MUSE
+pipeline data is not part of this repository. If a future rmpfit release fixes
+``lmpar`` upstream, drop the patch and delete the exception and this section.
