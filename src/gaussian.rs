@@ -56,6 +56,10 @@ pub struct FitOutcome<F: Float = f32> {
     pub(crate) errors: [F; 3],
     /// Sum of squared weighted residuals at the best-fit parameters.
     pub(crate) bestnorm: F,
+    /// Accepted Levenberg-Marquardt iterations.
+    pub(crate) n_iter: usize,
+    /// Model evaluations, Jacobian calls included.
+    pub(crate) n_fev: usize,
 }
 
 /// Weighted-residual problem handed to the MPFIT (rmpfit) solver.
@@ -251,6 +255,8 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
         ],
         errors,
         bestnorm: from_f64(bestnorm)?,
+        n_iter: status.n_iter,
+        n_fev: status.n_fev,
     })
 }
 

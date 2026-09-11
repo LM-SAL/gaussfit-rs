@@ -28,6 +28,7 @@ import numpy as np
 from ._gaussfit_rs import fit_gaussian_f32 as _fit_gaussian_f32
 from ._gaussfit_rs import fit_single_spectrum as _fit_single_spectrum
 from ._gaussfit_rs import fit_spectra_batch_guided as _fit_spectra_batch_guided
+from ._gaussfit_rs import fit_spectra_batch_slits as _fit_spectra_batch_slits
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -44,6 +45,7 @@ __all__ = [
     "fit_single_spectrum",
     "fit_spectra_batch",
     "fit_spectra_batch_guided",
+    "fit_spectra_batch_slits",
 ]
 
 
@@ -148,7 +150,11 @@ def fit_single_spectrum(
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
     quality: bool = False,
-) -> tuple[NDArray[np.float32], tuple[int, int]]:
+    meta: bool = False,
+) -> (
+    tuple[NDArray[np.float32], tuple[int, int]]
+    | tuple[NDArray[np.float32], tuple[int, int], NDArray[np.int32]]
+):
     """
     Fit a single Gaussian to one spectrum using the Rust backend.
 
@@ -205,6 +211,11 @@ def fit_single_spectrum(
         and for failed fits — the result flag column reports those.  Defaults
         to False, which keeps the eight-column contract.  See "Opt-In
         Unconstrained-Fit Indicator" in the design notes.
+    meta:
+        When True, a third return value carries the solver's ``[n_iter, n_fev]``
+        (accepted Levenberg-Marquardt iterations and model evaluations,
+        Jacobian calls included) as ``int32``, ``-1`` for a fit that did not
+        run or did not converge.  Defaults to False.
 
     Returns
     -------
@@ -214,10 +225,12 @@ def fit_single_spectrum(
         ``quality=True`` a ninth element holds the quality bits.
     (i_left, i_right) : tuple[int, int]
         Pixel indices of the fitting window used (half-open, ``[i_left, i_right)``).
+    counts : ndarray, shape (2,), int32
+        Only with ``meta=True``: ``[n_iter, n_fev]``.
     """
     spectrum = np.ascontiguousarray(spectrum, dtype=np.float32)
     n_px = int(n_pixels) if n_pixels is not None else len(spectrum)
-    return _fit_single_spectrum(
+    results, window, counts = _fit_single_spectrum(
         spectrum,
         np.ascontiguousarray(dopp_slit, dtype=np.float32),
         np.ascontiguousarray(spec_noise, dtype=np.float32),
@@ -238,14 +251,15 @@ def fit_single_spectrum(
         int(max_iter),
         bool(quality),
     )
+    return (results, window, counts) if meta else (results, window)
 
 
 _SPECTRA_NDIM = 2
 
 
-def _require_2d_spectra(spectra: NDArray[np.float32]) -> None:
-    if spectra.ndim != _SPECTRA_NDIM:
-        msg = "spectra must be a 2-D (N, M) array"
+def _require_2d(array: NDArray[np.float32], name: str = "spectra") -> None:
+    if array.ndim != _SPECTRA_NDIM:
+        msg = f"{name} must be a 2-D (N, M) array"
         raise ValueError(msg)
 
 
@@ -270,7 +284,11 @@ def fit_spectra_batch(
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
     quality: bool = False,
-) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
+    meta: bool = False,
+) -> (
+    tuple[NDArray[np.float32], NDArray[np.int32]]
+    | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.int32]]
+):
     """
     Fit Gaussians to N spectra in parallel using all available CPU cores.
 
@@ -292,7 +310,7 @@ def fit_spectra_batch(
         the full column count ``spectra.shape[1]``.
     guide_velocity, velocity_range, npix, npix_slack, dv, width_min,
     amplitude_rel_min, amplitude_rel_max, width_max, width_guess,
-    xtol, ftol, gtol, max_iter, quality:
+    xtol, ftol, gtol, max_iter, quality, meta:
         Same as :func:`fit_single_spectrum`.
 
     Returns
@@ -303,12 +321,13 @@ def fit_spectra_batch(
         ``quality=True``, holds the quality bits.
     indices : ndarray, shape (N, 2), int32
         ``[:, 0]`` = i_left, ``[:, 1]`` = i_right for each spectrum.
-
+    counts : ndarray, shape (N, 2), int32
+        Only with ``meta=True``: ``[n_iter, n_fev]`` per row, ``-1`` where the fit failed.
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
-    _require_2d_spectra(spectra)
+    _require_2d(spectra)
     n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
-    return _fit_spectra_batch_guided(
+    fits, indices, counts = _fit_spectra_batch_guided(
         spectra,
         np.ascontiguousarray(dopp_slit, dtype=np.float32),
         np.ascontiguousarray(spec_noise, dtype=np.float32),
@@ -329,6 +348,7 @@ def fit_spectra_batch(
         int(max_iter),
         bool(quality),
     )
+    return (fits, indices, counts) if meta else (fits, indices)
 
 
 def fit_spectra_batch_guided(
@@ -352,7 +372,11 @@ def fit_spectra_batch_guided(
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
     quality: bool = False,
-) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
+    meta: bool = False,
+) -> (
+    tuple[NDArray[np.float32], NDArray[np.int32]]
+    | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.int32]]
+):
     """
     Fit Gaussians to N spectra in parallel with one guide velocity per row.
 
@@ -361,9 +385,9 @@ def fit_spectra_batch_guided(
     that row returns :data:`FLAG_NO_LOCAL_MAX`, as in the C extension.
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
-    _require_2d_spectra(spectra)
+    _require_2d(spectra)
     n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
-    return _fit_spectra_batch_guided(
+    fits, indices, counts = _fit_spectra_batch_guided(
         spectra,
         np.ascontiguousarray(dopp_slit, dtype=np.float32),
         np.ascontiguousarray(spec_noise, dtype=np.float32),
@@ -384,6 +408,75 @@ def fit_spectra_batch_guided(
         int(max_iter),
         bool(quality),
     )
+    return (fits, indices, counts) if meta else (fits, indices)
+
+
+def fit_spectra_batch_slits(
+    *,
+    spectra: NDArray[np.float32],
+    dopp_slit: NDArray[np.float32],
+    spec_noise: NDArray[np.float32],
+    guide_velocities: NDArray[np.float32],
+    slit_index: NDArray[np.int32],
+    velocity_range: float,
+    npix: int,
+    npix_slack: int,
+    dv: float,
+    width_min: float,
+    n_pixels: int | None = None,
+    amplitude_rel_min: float,
+    amplitude_rel_max: float,
+    width_max: float,
+    width_guess: float,
+    xtol: float = 1.0e-6,
+    ftol: float = 1.0e-6,
+    gtol: float = 1.0e-6,
+    max_iter: int = 2000,
+    quality: bool = False,
+    meta: bool = False,
+) -> (
+    tuple[NDArray[np.float32], NDArray[np.int32]]
+    | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.int32]]
+):
+    """
+    Fit Gaussians to N spectra in parallel, each against the Doppler grid of its own slit.
+
+    Same as :func:`fit_spectra_batch_guided`, except ``dopp_slit`` has shape ``(n_slit, M)`` and
+    ``slit_index`` (shape ``(N,)``, ``int32`` values in ``[0, n_slit)``) names the row of
+    ``dopp_slit`` each spectrum is fitted against. Data with a slit axis can then be fitted in one
+    call from a reshaped view, with no per-slit staging copies::
+
+        rows = flux.reshape(-1, n_wave)
+        slit_index = np.indices(flux.shape[:-1])[slit_axis].ravel().astype(np.int32)
+    """
+    spectra = np.ascontiguousarray(spectra, dtype=np.float32)
+    _require_2d(spectra)
+    dopp_slit = np.ascontiguousarray(dopp_slit, dtype=np.float32)
+    _require_2d(dopp_slit, "dopp_slit")
+    n_px = int(n_pixels) if n_pixels is not None else spectra.shape[1]
+    fits, indices, counts = _fit_spectra_batch_slits(
+        spectra,
+        dopp_slit,
+        np.ascontiguousarray(spec_noise, dtype=np.float32),
+        np.ascontiguousarray(guide_velocities, dtype=np.float32),
+        np.ascontiguousarray(slit_index, dtype=np.int32),
+        float(velocity_range),
+        int(npix),
+        int(npix_slack),
+        float(dv),
+        float(width_min),
+        n_px,
+        float(amplitude_rel_min),
+        float(amplitude_rel_max),
+        float(width_max),
+        float(width_guess),
+        float(xtol),
+        float(ftol),
+        float(gtol),
+        int(max_iter),
+        bool(quality),
+    )
+    return (fits, indices, counts) if meta else (fits, indices)
 
 
 def fit_gaussian_f32(

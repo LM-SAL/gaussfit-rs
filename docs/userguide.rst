@@ -70,6 +70,12 @@ using Rayon, releasing the Python GIL for the full computation.
    converged_mask = fits[:, 7] == 0.0
    velocities = fits[converged_mask, 1]   # km/s
 
+:func:`~gaussfit_rs.fit_spectra_batch_guided` is the same call with one guide velocity per
+row.  When the Doppler grid differs per slit, :func:`~gaussfit_rs.fit_spectra_batch_slits`
+takes the grids as one ``(n_slit, M)`` table plus an ``int32`` ``slit_index`` naming the grid
+row for each spectrum, so a block with a slit axis is fitted in a single call from a reshaped
+view, with no per-slit staging copies.
+
 Output format
 -------------
 
@@ -123,8 +129,8 @@ Use :class:`~gaussfit_rs.FitResult` to unpack by name:
 Opt-in unconstrained-fit indicator
 ----------------------------------
 
-``fit_single_spectrum``, ``fit_spectra_batch`` and ``fit_spectra_batch_guided`` accept
-``quality=True``, which appends one column to the result array:
+``fit_single_spectrum``, ``fit_spectra_batch``, ``fit_spectra_batch_guided`` and
+``fit_spectra_batch_slits`` accept ``quality=True``, which appends one column to the result array:
 
 * single spectrum: ``(fit_results, window)``, where ``fit_results`` has shape ``(9,)``
 * batch: ``(fit_results, indices)``, where ``fit_results`` has shape ``(N, 9)``
@@ -169,6 +175,15 @@ window of +/-10 % of the peak, so comparing against its width flags ordinary low
 It is off by default, so result arity, dtypes and numerics are unchanged for existing callers.
 See "Opt-In Unconstrained-Fit Indicator" in the design notes for the measurements, the per-family
 breakdown and the cases no bit catches.
+
+Opt-in solver counts
+--------------------
+
+The same four functions accept ``meta=True``, which adds a third return value: an ``int32``
+array of ``[n_iter, n_fev]`` per fit (accepted Levenberg-Marquardt iterations and model
+evaluations, Jacobian calls included), ``-1`` where the fit did not run or did not converge.
+It exists for profiling and for comparing against other MPFIT builds; the default call is
+unchanged.
 
 Input validation and tolerances
 -------------------------------

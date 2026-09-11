@@ -16,6 +16,7 @@ from .fitting import (
     fit_single_spectrum,
     fit_spectra_batch,
     fit_spectra_batch_guided,
+    fit_spectra_batch_slits,
 )
 
 __version__ = _get_version("gaussfit-rs")
@@ -33,4 +34,5 @@ __all__ = [
     "fit_single_spectrum",
     "fit_spectra_batch",
     "fit_spectra_batch_guided",
+    "fit_spectra_batch_slits",
 ]
