@@ -35,7 +35,9 @@ def fit_fixture(ref):
     )
 
 
-def assert_fit_parity(fits, c_fits, dv, *, indices=None, c_indices=None, labels=None):
+def assert_fit_parity(
+    fits, c_fits, dv, *, indices=None, c_indices=None, labels=None, accepted_worse=None
+):
     """
     Assert that Rust fit results satisfy the parity contract with MUSE's C extension.
 
@@ -49,10 +51,16 @@ def assert_fit_parity(fits, c_fits, dv, *, indices=None, c_indices=None, labels=
     where the parameters agree: a fit pinned at a bound or narrower than a pixel has a near-singular
     Hessian whose float32 inverse is not meaningful. At least ``MIN_CONSTRAINED`` of the successful
     fits must qualify, so the error check cannot silently vanish.
+
+    ``accepted_worse`` names documented exceptions to the one-sided rule: a mapping of label to
+    ``(absolute row indices, cap)``, where ``cap`` is the maximum tolerated ``Rust chi2 / C chi2``
+    for those rows only. Every entry must match a decision recorded in ``docs/design-notes.rst``;
+    the function returns how many rows used an exception so a caller can fail when one goes stale.
     """
     labels = np.zeros(len(fits), dtype=int) if labels is None else np.asarray(labels)
     successful = c_fits[:, 7] == FLAG_SUCCESS
     n_constrained = 0
+    n_accepted = 0
     for label in np.unique(labels):
         rows = labels == label
         np.testing.assert_array_equal(fits[rows, 7], c_fits[rows, 7], err_msg=f"{label}: flags")
@@ -71,7 +79,21 @@ def assert_fit_parity(fits, c_fits, dv, *, indices=None, c_indices=None, labels=
         )
         chi_close = np.abs(r[:, 6] - c[:, 6]) <= RTOL * c[:, 6] + CHI_ATOL
         close = (np.abs(r[:, :3] - c[:, :3]) <= RTOL * scale).all(axis=1) & chi_close
-        worse = ~close & (r[:, 6] > c[:, 6] * (1 + RTOL) + CHI_ATOL)
+        chi_worse = r[:, 6] > c[:, 6] * (1 + RTOL) + CHI_ATOL
+        # Documented exceptions (see the docstring and docs/design-notes.rst): the local lmpar fix
+        # makes one specific low-SNR row land in a slightly worse local minimum than C. Only the
+        # named rows are exempt, and only up to the recorded ratio cap.
+        accepted = np.zeros(len(r), dtype=bool)
+        exception = (accepted_worse or {}).get(label)
+        if exception is not None:
+            allowed_rows, cap = exception
+            label_rows = np.flatnonzero(rows & successful)
+            wanted = np.isin(
+                label_rows, np.fromiter(allowed_rows, dtype=int, count=len(allowed_rows))
+            )
+            accepted = chi_worse & wanted & (r[:, 6] <= c[:, 6] * cap + CHI_ATOL)
+        n_accepted += int(accepted.sum())
+        worse = ~close & chi_worse & ~accepted
         assert not worse.any(), (
             f"{label}: Rust fit worse than C, reduced chi-square {r[worse, 6]} vs {c[worse, 6]}"
         )
@@ -88,6 +110,7 @@ def assert_fit_parity(fits, c_fits, dv, *, indices=None, c_indices=None, labels=
     assert n_constrained >= MIN_CONSTRAINED * successful.sum(), (
         "too few well-constrained fits to compare errors"
     )
+    return n_accepted
 
 
 def _clean_version(version):
