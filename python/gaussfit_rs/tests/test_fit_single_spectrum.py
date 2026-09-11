@@ -8,6 +8,9 @@ import pytest
 from gaussfit_rs import (
     FLAG_NO_LOCAL_MAX,
     FLAG_SUCCESS,
+    QUALITY_PEGGED,
+    QUALITY_UNCONSTRAINED,
+    QUALITY_ZERO_ERROR,
     FitResult,
     fit_single_spectrum,
     fit_spectra_batch,
@@ -280,9 +283,9 @@ def test_nonfinite_guide_reports_no_local_max(guide):
     np.testing.assert_array_equal(idx[0], [0, 0])
 
 
-def test_quality_flag_is_opt_in_and_reports_unconstrained_successes():
+def test_quality_bits_are_opt_in_and_report_unconstrained_successes():
     """
-    ``quality=True`` adds the documented unconstrained-fit indicator; default calls are unchanged.
+    ``quality=True`` adds the documented quality bits; default calls are unchanged.
     """
     v, spec, err = _make_spectrum(amp=1.0, noise=0.05)
 
@@ -306,7 +309,7 @@ def test_quality_flag_is_opt_in_and_reports_unconstrained_successes():
     )[0]
     assert fits_u[7] == FLAG_SUCCESS
     assert fits_u[4] >= 2.0 * COMMON_KW["dv"] * COMMON_KW["npix"]
-    assert fits_u[8] == 1
+    assert int(fits_u[8]) & QUALITY_UNCONSTRAINED
 
     # Failed fits are reported by the result flag, not the indicator.
     flat = np.full(v.size, -1.0, dtype=np.float32)
@@ -317,15 +320,15 @@ def test_quality_flag_is_opt_in_and_reports_unconstrained_successes():
     assert fits_f[8] == 0  # failed fits carry no indicator
 
 
-def test_batch_quality_flags_match_the_documented_criterion():
+def test_batch_quality_bits_match_the_documented_criterion():
     """
-    The batch indicator (ninth column) equals the documented span test on the returned errors.
+    The batch bits (ninth column) equal the documented span and zero tests on the returned errors.
     """
     v, spec, err = _make_spectrum(amp=1.0, noise=0.05)
     checker = np.where(np.arange(v.size) % 2 == 0, 3.0, -3.0)
     noisy = (0.5 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2) + checker).astype(np.float32)
     # A noiseless line far too faint to constrain: its determinant falls under the guard, so all
-    # three errors come back exactly zero and the fit is unconstrained by definition.
+    # three errors come back exactly zero. This exercises the guard, not an exact-fit residual.
     tiny = (1.0e-6 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2)).astype(np.float32)
     spectra = np.stack([spec, noisy, tiny])
     noises = np.stack([err, np.full(v.size, 3.0, dtype=np.float32), err])
@@ -342,13 +345,18 @@ def test_batch_quality_flags_match_the_documented_criterion():
     assert indices.shape == (3, 2)
     assert fits[0, 7] == FLAG_SUCCESS
     assert flags[0] == 0
-    assert flags[1] == 1
+    assert int(flags[1]) & QUALITY_UNCONSTRAINED
     assert np.array_equal(fits[2, 3:6], np.zeros(3, dtype=np.float32))  # the guard zeroed them
-    assert flags[2] == 1
+    assert int(flags[2]) & QUALITY_ZERO_ERROR
+    assert not int(flags[2]) & QUALITY_UNCONSTRAINED  # zero errors stay under any span
 
+    # The span and zero bits are reproducible from the returned columns alone; the pegged bit is
+    # not (it needs the bounds, and the fit works in peak-normalised amplitude units).
     span_velocity = 2.0 * COMMON_KW["dv"] * COMMON_KW["npix"]
     span_width = COMMON_KW["width_max"] - COMMON_KW["width_min"]
     derived = (
-        (fits[:, 4] >= span_velocity) | (fits[:, 5] >= span_width) | (fits[:, 3:6] == 0).any(axis=1)
+        (QUALITY_UNCONSTRAINED * (fits[:, 4] >= span_velocity))
+        | (QUALITY_UNCONSTRAINED * (fits[:, 5] >= span_width))
+        | (QUALITY_ZERO_ERROR * (fits[:, 3:6] == 0).any(axis=1))
     ).astype(np.float32)
-    assert np.array_equal(flags, derived)
+    assert np.array_equal(flags % QUALITY_PEGGED, derived % QUALITY_PEGGED)

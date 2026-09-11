@@ -26,7 +26,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from gaussfit_rs import FLAG_SUCCESS, fit_gaussian_f32
+from gaussfit_rs import (
+    FLAG_SUCCESS,
+    QUALITY_PEGGED,
+    QUALITY_UNCONSTRAINED,
+    QUALITY_ZERO_ERROR,
+    fit_gaussian_f32,
+)
 from gaussfit_rs.tests.helpers import FIXTURES, figure_test, fit_fixture
 
 PANELS = 12
@@ -60,15 +66,15 @@ def _view(dopp, window, guide, velocity_range, margin=6):
     return slice(max(left - margin, 0), min(right + margin, dopp.size))
 
 
-def _panel_text(row, fits, ref_fits, unconstrained):
+def _panel_text(row, fits, ref_fits, quality):
     """
-    Fitted parameters and quality, compact enough for a panel caption.
+    Fitted parameters and quality bits, compact enough for a panel caption.
     """
     if fits[row, 7] != FLAG_SUCCESS:
         return f"#{row} no fit (flag {fits[row, 7]:.0f})"
     amp, vel, sigma = fits[row, :3]
     e_amp, e_vel, e_sigma = fits[row, 3:6]
-    marker = " UNC" if unconstrained[row] else ""
+    marker = f" q={int(quality[row])}"
     return (
         f"#{row} A={amp:.3g}+/-{e_amp:.2g} V={vel:.3g}+/-{e_vel:.2g}\n"
         f"    S={sigma:.4g}+/-{e_sigma:.2g}\n"
@@ -84,7 +90,7 @@ def test_fit_gallery(fixture, family):
     """
     ref = np.load(fixture)
     fits, indices = fit_fixture(ref, quality=True)
-    unconstrained = fits[:, 8] != 0
+    quality = fits[:, 8]
     dopp, velocity_range = ref["dopp"], float(ref["velocity_range"])
     rows = np.flatnonzero(ref["labels"] == family)[:PANELS]
     fig, axes = plt.subplots(3, 4, figsize=(16, 9), constrained_layout=True)
@@ -100,14 +106,18 @@ def test_fit_gallery(fixture, family):
             ax.plot(fine, _gaussian(fine, fits[row]), color="C0", lw=1.5, label="Rust")
         if ref["fits"][row, 7] == FLAG_SUCCESS:
             ax.plot(fine, _gaussian(fine, ref["fits"][row]), "--", color="C3", lw=1.2, label="C")
-        ax.set_title(_panel_text(row, fits, ref["fits"], unconstrained), fontsize=7.5)
+        ax.set_title(_panel_text(row, fits, ref["fits"], quality), fontsize=7.5)
         ax.set_xlabel("Doppler velocity [km/s]", fontsize=8)
     for ax in axes.flat[len(rows) :]:
         ax.set_axis_off()
     handles, _ = axes.flat[0].get_legend_handles_labels()
     if handles:
         axes.flat[0].legend(fontsize=8)
-    fig.suptitle(f"{family}: {fixture.stem} (window shaded; UNC = unconstrained fit)")
+    fig.suptitle(
+        f"{family}: {fixture.stem} (window shaded; q = quality bits: "
+        f"{QUALITY_UNCONSTRAINED} unconstrained, {QUALITY_ZERO_ERROR} zero error, "
+        f"{QUALITY_PEGGED} pegged)"
+    )
     return fig
 
 
@@ -119,7 +129,7 @@ def test_family_overview(fixture):
     """
     ref = np.load(fixture)
     fits, indices = fit_fixture(ref, quality=True)
-    unconstrained = fits[:, 8] != 0
+    quality = fits[:, 8]
     dopp, velocity_range = ref["dopp"], float(ref["velocity_range"])
     families = np.unique(ref["labels"]).tolist()
     ncols = 4
@@ -140,7 +150,7 @@ def test_family_overview(fixture):
         ax.text(
             0.02,
             0.96,
-            _panel_text(row, fits, ref["fits"], unconstrained),
+            _panel_text(row, fits, ref["fits"], quality),
             transform=ax.transAxes,
             va="top",
             ha="left",
@@ -161,13 +171,13 @@ def test_quality_per_family(fixture):
     """
     ref = np.load(fixture)
     fits, _ = fit_fixture(ref, quality=True)
-    unconstrained = fits[:, 8] != 0
+    quality = fits[:, 8].astype(int)
     families = np.unique(ref["labels"]).tolist()
     solved = fits[:, 7] == FLAG_SUCCESS
     stats = {
         "success [%]": [100.0 * np.mean(solved[ref["labels"] == family]) for family in families],
         "unconstrained of solved [%]": [
-            100.0 * np.mean(unconstrained[(ref["labels"] == family) & solved])
+            100.0 * np.mean(quality[(ref["labels"] == family) & solved] & QUALITY_UNCONSTRAINED)
             if np.any((ref["labels"] == family) & solved)
             else 0.0
             for family in families
@@ -254,7 +264,14 @@ def test_low_level_gaussian_fits():
             [0.0, 30.0, 1.0],
             [50.0, 70.0, 20.0],
         ),
-        ("bound-pinned", truth, 0.05, [12.0, 50.0, 8.0], [0.0, 45.0, 1.0], [50.0, 55.0, 20.0]),
+        (
+            "bound-pinned (sigma <= 6)",
+            truth,
+            0.05,
+            [12.0, 50.0, 6.0],
+            [0.0, 30.0, 1.0],
+            [50.0, 70.0, 6.0],
+        ),
         (
             "misfit (flat top)",
             12.0 * (np.abs(x - 50.0) < 8.0),
@@ -276,6 +293,9 @@ def test_low_level_gaussian_fits():
             lower_bounds=np.asarray(lower, dtype=np.float32),
             upper_bounds=np.asarray(upper, dtype=np.float32),
         )
+        assert fit[7] == FLAG_SUCCESS
+        if name.startswith("bound-pinned"):
+            assert fit[2] == upper[2]
         ax.errorbar(x, y, err, fmt=".", color="0.45", ms=4, lw=0.6)
         ax.plot(x, _gaussian(x, np.asarray(initial)), ":", color="0.6", lw=1.2, label="initial")
         if fit[7] == FLAG_SUCCESS:
@@ -287,5 +307,5 @@ def test_low_level_gaussian_fits():
         )
         ax.set_xlabel("x")
     axes.flat[0].legend(fontsize=8)
-    fig.suptitle("fit_gaussian_f32: arbitrary data (bounds annotated in the title's spans)")
+    fig.suptitle("fit_gaussian_f32: arbitrary data")
     return fig

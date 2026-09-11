@@ -213,8 +213,8 @@ pub(crate) fn fit_single_spectrum<'py>(
 
     let mut values = result.fit_results.to_vec();
     if quality {
-        // Opt-in ninth column: the unconstrained-fit indicator (see the design notes).
-        values.push(f32::from(result.unconstrained));
+        // Opt-in ninth column: quality bits (see the design notes).
+        values.push(f32::from(result.quality));
     }
     Ok((values.into_pyarray(py), (result.i_left, result.i_right)))
 }
@@ -392,7 +392,7 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
 
     let dopp_window = &dopp_data[..sg_xpixels];
 
-    // The unconstrained-fit indicator is an opt-in ninth column, so the default
+    // The quality bitmask is an opt-in ninth column, so the default
     // eight-column contract stays byte-identical for every existing caller.
     let stride = if quality { 9 } else { 8 };
     let mut fit_values = vec![f32::NAN; n_spectra * stride];
@@ -423,7 +423,7 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
                 );
                 fit_row[..8].copy_from_slice(&result.fit_results);
                 if quality {
-                    fit_row[8] = f32::from(result.unconstrained);
+                    fit_row[8] = f32::from(result.quality);
                 }
                 idx_row[0] = result.i_left;
                 idx_row[1] = result.i_right;

@@ -36,6 +36,9 @@ __all__ = [
     "FLAG_NO_CONVERGENCE",
     "FLAG_NO_LOCAL_MAX",
     "FLAG_SUCCESS",
+    "QUALITY_PEGGED",
+    "QUALITY_UNCONSTRAINED",
+    "QUALITY_ZERO_ERROR",
     "FitResult",
     "fit_gaussian_f32",
     "fit_single_spectrum",
@@ -85,7 +88,10 @@ class FitResult(NamedTuple):
     @classmethod
     def from_array(cls, arr: NDArray[np.float32]) -> FitResult:
         """
-        Construct a :class:`FitResult` from an 8-element fit array.
+        Construct a :class:`FitResult` from a fit row: 8 elements, or 9 with the quality bits.
+
+        A ninth element, present only when the call used ``quality=True``, is dropped; read the bits
+        from the array itself (``row[8]``) when they are needed.
         """
         return cls(*arr[:8].tolist())
 
@@ -101,6 +107,24 @@ class FitResult(NamedTuple):
 FLAG_SUCCESS: float = 0.0
 FLAG_NO_LOCAL_MAX: float = 1.0
 FLAG_NO_CONVERGENCE: float = 2.0
+
+# Opt-in quality bits, returned in column 8 as a float when ``quality=True``. Bits are reported
+# separately instead of folded into one boolean because they answer different questions; a
+# consumer that wants "any of them" tests ``fits[:, 8] != 0``.
+QUALITY_UNCONSTRAINED: int = 1
+"""
+A parameter's error is not smaller than the velocity or width interval it was bounded to.
+"""
+
+QUALITY_ZERO_ERROR: int = 2
+"""
+A formal error is exactly zero, including singular or exact fits.
+"""
+
+QUALITY_PEGGED: int = 4
+"""
+A fitted parameter sits exactly on a bound: reported, not judged (saturation also sets it).
+"""
 
 
 def fit_single_spectrum(
@@ -175,22 +199,19 @@ def fit_single_spectrum(
     max_iter:
         Maximum LM iterations (default 2000).
     quality:
-        When True, an unconstrained-fit indicator is appended to *fit_results*
-        as a ninth column: 1 when the fit succeeded but a parameter's formal
-        error is not smaller than the interval that parameter was bounded to,
-        so the data do not constrain it; also 1 when an error is exactly 0,
-        which is impossible in a real fit and is what the near-singular guard
-        returns.  The indicator is 0 for failed fits; the result flag column
-        reports those.  Defaults to False, which keeps the eight-column
-        contract.  See "Opt-In Unconstrained-Fit Indicator" in the design
-        notes.
+        When True, a ninth column is appended to *fit_results* holding the
+        quality bits (see :data:`QUALITY_UNCONSTRAINED`,
+        :data:`QUALITY_ZERO_ERROR`, :data:`QUALITY_PEGGED`), 0 when none apply
+        and for failed fits — the result flag column reports those.  Defaults
+        to False, which keeps the eight-column contract.  See "Opt-In
+        Unconstrained-Fit Indicator" in the design notes.
 
     Returns
     -------
     fit_results : ndarray, shape (8,) or (9,), float32
         ``[amplitude, velocity, sigma, amplitude_err, velocity_err, sigma_err,
         reduced_chi2, flag]``.  See module docstring for details.  With
-        ``quality=True`` a ninth element holds the unconstrained-fit indicator.
+        ``quality=True`` a ninth element holds the quality bits.
     (i_left, i_right) : tuple[int, int]
         Pixel indices of the fitting window used (half-open, ``[i_left, i_right)``).
     """
@@ -279,7 +300,7 @@ def fit_spectra_batch(
     fit_results : ndarray, shape (N, 8) or (N, 9), float32
         One result row per input spectrum.  Column layout same as
         :func:`fit_single_spectrum`; the ninth column, present only with
-        ``quality=True``, holds the unconstrained-fit indicator.
+        ``quality=True``, holds the quality bits.
     indices : ndarray, shape (N, 2), int32
         ``[:, 0]`` = i_left, ``[:, 1]`` = i_right for each spectrum.
 

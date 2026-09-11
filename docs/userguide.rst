@@ -129,27 +129,46 @@ Opt-in unconstrained-fit indicator
 * single spectrum: ``(fit_results, window)``, where ``fit_results`` has shape ``(9,)``
 * batch: ``(fit_results, indices)``, where ``fit_results`` has shape ``(N, 9)``
 
-Column 8 (``fit_results[8]``, or ``fit_results[:, 8]`` for a batch) is 1 when the fit succeeded but
-the data do not constrain it, and 0 otherwise — including for failed fits, which the flag column
-reports (use ``fit_results[:, 7]`` for those).  A fit is unconstrained when
+Column 8 is 0 for failed fits (the flag column reports those) and otherwise a mask of these bits,
+exported as :data:`~gaussfit_rs.QUALITY_UNCONSTRAINED`, :data:`~gaussfit_rs.QUALITY_ZERO_ERROR`
+and :data:`~gaussfit_rs.QUALITY_PEGGED`:
 
-* the velocity error is not smaller than the velocity interval it was fitted in,
-  ``2 * dv * npix``; or
-* the linewidth error is not smaller than ``width_max - width_min``; or
-* any of the three errors is exactly 0, which no real fit produces — the near-singular guard
-  returns zeros on near-zero-flux windows.
+.. list-table::
+   :header-rows: 1
 
-The amplitude interval is deliberately not used: in the pipeline configuration it is a detection
-window of +/-10 % of the peak, so comparing against its width flags ordinary low-SNR fits rather
-than unconstrained ones (measured: 40 % of the solved spaxels of a real run, against 5.9 % for the
-velocity interval).
+   * - bit
+     - meaning
+   * - 1
+     - a parameter's error is not smaller than the interval it was bounded to: velocity
+       (``2 * dv * npix``) or linewidth (``width_max - width_min``). The data do not constrain it.
+   * - 2
+     - a formal error is exactly 0. This can result from the near-singular guard or from an exact
+       fit, because formal errors scale with the residuals. It does not prove the fit is unconstrained.
+   * - 4
+     - a fitted parameter sits exactly on a bound. Reported, not judged: legitimate saturation
+       sets this bit too (a broad line pinned at ``width_max``), so it is the most common bit and
+       the one not to mask on blindly.
+
+Convert the float32 quality column to integers before testing individual bits:
+
+.. code-block:: python
+
+   from gaussfit_rs import FLAG_SUCCESS, QUALITY_UNCONSTRAINED, QUALITY_ZERO_ERROR
+
+   flags = fits[:, 8].astype("uint8")
+   failed = fits[:, 7] != FLAG_SUCCESS
+   unconstrained = (flags & QUALITY_UNCONSTRAINED) != 0
+   suspect = (flags & (QUALITY_UNCONSTRAINED | QUALITY_ZERO_ERROR)) != 0
+
+``suspect`` includes zero-error fits for inspection; it is not an automatic rejection rule for
+exact fits. Failed fits must be checked separately because their quality bits are zero.
+``flags != 0`` also includes pegged parameters, which may be legitimate saturation.
+The amplitude interval is deliberately excluded: in the pipeline configuration it is a detection
+window of +/-10 % of the peak, so comparing against its width flags ordinary low-SNR fits.
 
 It is off by default, so result arity, dtypes and numerics are unchanged for existing callers.
-Turning it on is how a consumer masks or down-weights the spaxels that fit "successfully" with
-velocity errors of hundreds of km/s: on a real MUSE run that is **11.2 %** of the 3,459 solved
-spaxels of the summed cube, and 7.4 % / 3.0 % of the solved rows of the two C-reference corpora.
-See "Opt-In Unconstrained-Fit Indicator" in the design notes for the measurements and for the
-cases it does not catch.
+See "Opt-In Unconstrained-Fit Indicator" in the design notes for the measurements, the per-family
+breakdown and the cases no bit catches.
 
 Input validation and tolerances
 -------------------------------

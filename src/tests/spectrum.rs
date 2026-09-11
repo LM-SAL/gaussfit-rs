@@ -1,6 +1,8 @@
 use crate::gaussian::FitConfig;
 use crate::spectrum::{fit_single_spectrum_core, FitSingleSpectrumResult};
-use crate::{FLAG_NO_LOCAL_MAX, FLAG_SUCCESS};
+use crate::{
+    FLAG_NO_LOCAL_MAX, FLAG_SUCCESS, QUALITY_PEGGED, QUALITY_UNCONSTRAINED, QUALITY_ZERO_ERROR,
+};
 
 const SIGMA_TRUE: f32 = 30.0;
 
@@ -218,11 +220,10 @@ fn negative_peak_returns_no_local_max() {
 }
 
 #[test]
-fn quality_flag_separates_constrained_and_unconstrained_fits() {
-    // Opt-in "unconstrained" indicator: a parameter whose formal error is not
-    // smaller than the interval it was bounded to. A clean line is constrained;
-    // a noise-only spectrum is not. See "Opt-In Unconstrained-Fit Indicator" in
-    // docs/design-notes.rst.
+fn quality_bits_separate_constrained_unconstrained_zero_and_pegged_fits() {
+    // Opt-in quality bits (ninth result column with `quality=True`). They are
+    // reported separately because they mean different things: see "Opt-In
+    // Unconstrained-Fit Indicator" in docs/design-notes.rst.
     let v = velocity_grid(60, -300.0, 600.0 / 59.0);
     let clean = fit_clean_spectrum_with_noise(
         &v,
@@ -230,12 +231,12 @@ fn quality_flag_separates_constrained_and_unconstrained_fits() {
         &vec![0.05; v.len()],
     );
     assert_eq!(clean.fit_results[7], FLAG_SUCCESS);
-    assert_eq!(clean.unconstrained, 0);
+    assert_eq!(clean.quality, 0);
 
     // A faint line over structured noise: the fit succeeds, but its velocity and
     // width errors (hundreds of km/s) exceed the intervals they were bounded to
-    // (2*dv*npix = 240 km/s and width_max - width_min = 95 km/s), so it is
-    // reported unconstrained. Mirror of the Python test's `noisy` row.
+    // (2*dv*npix = 240 km/s and width_max - width_min = 95 km/s), so the
+    // unconstrained bit is set. Mirror of the Python test's `noisy` row.
     let checker: Vec<f32> = (0..v.len())
         .map(|i| if i % 2 == 0 { 3.0 } else { -3.0 })
         .collect();
@@ -248,20 +249,37 @@ fn quality_flag_separates_constrained_and_unconstrained_fits() {
     assert_eq!(unconstrained.fit_results[7], FLAG_SUCCESS);
     assert!(unconstrained.fit_results[4] >= 2.0 * 12.0 * 10.0);
     assert!(unconstrained.fit_results[5] >= 100.0 - 5.0);
-    assert_eq!(unconstrained.unconstrained, 1);
+    assert_ne!(unconstrained.quality & QUALITY_UNCONSTRAINED, 0);
+    // This pathological fit also runs a parameter onto a bound, so the pegged
+    // bit is set independently. That is what separates these bits from a single
+    // boolean: pegging alone is not evidence of an unconstrained fit.
+    assert_ne!(unconstrained.quality & QUALITY_PEGGED, 0);
 
     // A noiseless line far too faint to constrain: the determinant falls under
-    // the near-singular guard, which zeroes all three formal errors, so the
-    // span comparisons see 0 and the zero-error rule has to flag it. The
-    // amplitude sits orders of magnitude below the level where the guard bites.
+    // the near-singular guard, which zeroes all three formal errors, so the span
+    // comparisons see 0 and only the zero-error bit fires. The amplitude sits
+    // orders of magnitude below the level where the guard bites.
     let tiny = gaussian_spectrum(&v, 1.0e-8, 0.0, SIGMA_TRUE);
     let guarded = fit_clean_spectrum_with_noise(&v, &tiny, &vec![1.0; v.len()]);
     assert_eq!(guarded.fit_results[7], FLAG_SUCCESS);
     assert_eq!(&guarded.fit_results[3..6], &[0.0; 3]);
-    assert_eq!(guarded.unconstrained, 1);
+    assert_ne!(guarded.quality & QUALITY_ZERO_ERROR, 0);
+    assert_eq!(guarded.quality & QUALITY_UNCONSTRAINED, 0); // zero errors stay under any span
 
-    // Failed fits are excluded from the indicator; the result flag reports them.
+    // A line much broader than width_max: the width parameter lands exactly on
+    // its upper bound, which is saturation rather than a data problem, so only
+    // the pegged bit is set.
+    let broad = fit_clean_spectrum_with_noise(
+        &v,
+        &gaussian_spectrum(&v, 1.0, 0.0, 300.0),
+        &vec![0.05; v.len()],
+    );
+    assert_eq!(broad.fit_results[7], FLAG_SUCCESS);
+    assert_eq!(broad.fit_results[2], 100.0);
+    assert_ne!(broad.quality & QUALITY_PEGGED, 0);
+
+    // Failed fits carry no bits; the result flag reports them.
     let failed = fit_clean_spectrum_with_noise(&v, &vec![-1.0; v.len()], &vec![0.05; v.len()]);
     assert_eq!(failed.fit_results[7], FLAG_NO_LOCAL_MAX);
-    assert_eq!(failed.unconstrained, 0);
+    assert_eq!(failed.quality, 0);
 }
