@@ -139,8 +139,8 @@ scale (it returns 0 at peak 5.7), so **neither implementation is scale-invariant
 Improvement worth considering (new, beyond the original plan): make the guard
 relative — compare `det` against the product of the diagonal terms — so
 tiny-amplitude fits are treated like any other. That is a behaviour change needing
-the parity corpus and a decision, but it would remove the only place where rust
-reports a physically impossible "exactly 0" uncertainty.
+the parity corpus and a decision, but it would avoid guard-induced zero uncertainties
+on these fits. Exact fits can still report zeros because errors scale with residuals.
 
 ### B4 `lmpar` `max(paru)` deviation — **patched** 2026-09-11
 Fix applied: `third_party/rmpfit/src/lib.rs` now clamps with
@@ -184,32 +184,21 @@ are hundreds of km/s. The "68 of 82,368 corpus fits move onto C's values" figure
 100-seed corpus measurement, not this pipeline data.
 Still worth doing: report the deviation upstream (it exists in released rmpfit).
 
-### B5 Unconstrained fits — **opt-in indicator implemented** 2026-09-11
-8-9 % of pixels (10,876 in `mom_gt_noise`, 11,382 in `mom_gfat`, 7,796 in `mom_inv`) carry a
-median `error_velocity` of 200-244 km/s while **both** backends return FLAG_SUCCESS and the
-pipeline propagates them into the moments and area statistics (amplitude there 2.6-3.6 against
-17.8-18.9 overall). `quality=True` on the three spectrum entry points now appends a ninth column to
-the result array (`fit_results[8]`, `fit_results[:, 8]` for a batch): 1 when the fit succeeded but
-the data do not constrain it, 0 otherwise and for failed fits. Flagged when the velocity error is
-not smaller than `2*dv*npix`, or the linewidth error is not smaller than `width_max - width_min`,
-or any of the three errors is exactly 0 (the near-singular guard's output, impossible in a real
-fit).
+### B5 Unconstrained fits — **opt-in quality bits implemented** 2026-09-11
+Both backends can return FLAG_SUCCESS for parameters the data do not constrain, and the pipeline
+propagates these fits into the moments and area statistics. `quality=True` on the three spectrum
+entry points now appends a ninth column with separate bits for errors exceeding parameter spans,
+zero errors, and parameters at bounds. Zero errors can also come from exact fits, and pegging can
+be legitimate saturation; consumers must choose how to handle each bit.
 
-The amplitude term was implemented first and dropped: the pipeline's amplitude bounds are a +/-10 %
-detection window, so it fires on ordinary low-SNR fits — on the summed cube of a real run it raises
-the rate from 11.2 % to 45.2 % of the 3,459 solved spaxels (1,384 of them against 205 for velocity
-alone). Measured rate with the shipped criterion: 11.2 % of the real run's solved spaxels, 7.4 % of
-the 336 solved `muse` corpus rows, 3.0 % of the 367 `wide` rows. Bound-pinned parameters with small
-errors are **not** caught, deliberately: including them would flag ~30 % of `muse` rows (amplitude
-saturation, 79 of 336, and 15 of 15 `broad` rows). Default off, so the 8-column contract and the
-parity corpus are untouched. Documented in `docs/userguide.rst` and "Opt-In Unconstrained-Fit
-Indicator" in `docs/design-notes.rst` (criterion, measurements, limitations); pinned by
-`src/tests/spectrum.rs::quality_flag_separates_constrained_and_unconstrained_fits`,
-`python/gaussfit_rs/tests/test_fit_single_spectrum.py` and the figure suite
-(`test_quality_per_family`, `UNC` markers in the galleries).
-Example figure of a flagged fit, both backends side by side: `/tmp/unconstrained_example.py`
-(corpus row where C reports zero error and Rust a 1e6 km/s one, plus the symmetric-line sign flip).
-Follow-up (muse side): decide whether `sdc_benchmark` should consume the flag.
+The default eight-column output is preserved. See [the user guide](userguide.rst) for usage and
+"Opt-In Unconstrained-Fit Indicator" in [the design notes](design-notes.rst) for the criteria,
+measurements, limitations, and test coverage.
+
+Follow-up (muse side): decide whether `sdc_benchmark` should consume the bits. If it does, the C
+path needs the same column (`muse/fastfit/fitting_block.py` preallocates `(N, 8)` for C results)
+and the flag must be threaded through the wrapper's `quality` argument.
+
 
 ## 4. The carlos_dev C++ prototype: faster per row, still not worth adopting
 
@@ -237,5 +226,5 @@ R2's precision/allocation findings and R5's ideas, plus its Python layer's
   (worst 2739x) and no hangs on NaN inputs. The only place rust and C differ
   elsewhere is an absolute `|det| < 1e-30` guard that zeroes the error field on
   tiny-amplitude fits (B3): no regression risk, but making the guard relative
-  would remove a physically impossible "exactly 0" uncertainty. The separate
-  open decision is whether to flag genuinely unconstrained fits (B5).
+  would avoid guard-induced zero uncertainties. Opt-in quality bits now report
+  large or zero errors and pegged parameters (B5); pipeline adoption remains open.

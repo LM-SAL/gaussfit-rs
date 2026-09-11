@@ -152,14 +152,8 @@ Opt-In Unconstrained-Fit Indicator
 - **Status:** resolved 2026-09-11; opt-in, default off.
 - **Owner:** Nabil Freij.
 - **Code:** ``src/spectrum.rs::fit_prepared_spectrum_window`` (the predicate),
-  ``src/api.rs`` (the ``quality`` keyword on the three spectrum entry points) and
+  ``src/api.rs`` (the ``quality`` argument on the two Rust spectrum entry points) and
   ``python/gaussfit_rs/fitting.py`` (the public wrappers).
-- **Tests encoding current behavior:**
-  ``src/tests/spectrum.rs::quality_flag_separates_constrained_and_unconstrained_fits``,
-  ``python/gaussfit_rs/tests/test_fit_single_spectrum.py::test_quality_flag_is_opt_in_and_reports_unconstrained_successes``,
-  ``python/gaussfit_rs/tests/test_fit_single_spectrum.py::test_batch_quality_flags_match_the_documented_criterion``,
-  and the figure suite (``test_quality_per_family``, and the ``UNC`` marker in
-  ``test_fit_gallery`` / ``test_family_overview``).
 
 Current Behavior
 ~~~~~~~~~~~~~~~~
@@ -169,44 +163,87 @@ constrain, and the pipeline propagates them into the moments and area statistics
 run 8-9 % of spaxels carry a median velocity error of 200-244 km/s while their amplitude is 2.6-3.6
 against 17.8-18.9 overall. With ``quality=True`` those spaxels are reported instead of being
 indistinguishable from a good fit: the call appends a ninth column to the result array
-(``fit_results[8]``, ``fit_results[:, 8]`` for a batch), 1 for a successful but unconstrained fit
-and 0 otherwise, including for failed fits.
+(``fit_results[8]``, ``fit_results[:, 8]`` for a batch), 0 for failed fits and otherwise a mask of
+three bits.
 
-Criterion
-~~~~~~~~~
+Bits, not a boolean
+~~~~~~~~~~~~~~~~~~~
 
-A successful fit is flagged when any of:
+* **1 (``QUALITY_UNCONSTRAINED``)** -- the velocity error is not smaller than ``2*dv*npix``, or the
+  linewidth error is not smaller than ``width_max - width_min``. This is the "the data do not
+  determine this parameter" answer.
+* **2 (``QUALITY_ZERO_ERROR``)** -- a formal error is exactly 0. The near-singular guard
+  (``src/gaussian.rs``, ``|det| < 1e-30``) returns zeros on near-zero-flux windows, but it is not
+  the only cause: errors also scale with the residuals, so an exact fit can produce zeros with
+  a nonsingular Hessian. This bit reports the error value, not its cause.
+* **4 (``QUALITY_PEGGED``)** -- a fitted parameter sits exactly on one of its bounds (rmpfit clamps
+  onto the bound exactly, so equality is the test).
 
-* the velocity error is not smaller than the velocity interval it was fitted in, ``2*dv*npix``;
-* the linewidth error is not smaller than ``width_max - width_min``;
-* any of the three errors is exactly 0. That is physically impossible; the near-singular guard
-  (``src/gaussian.rs``, ``|det| < 1e-30``) returns zeros on near-zero-flux windows, where the C
-  backend's fallback still returns a finite number. Measured on the summed cube of a real run, 193
-  of 3,459 solved spaxels are zeroed this way, and 19 of the 336 solved rows of the ``muse``
-  corpus.
+They are reported separately because they mean different things and a single boolean forces one
+policy on every consumer. Measured on the ``muse`` corpus (336 solved rows, 117 with bit 4 = 34.8 %),
+pegging is *not* evidence of an unconstrained fit: 15 of 15 ``broad`` rows and 11 of 17 ``narrow``
+rows set it, but so do 5 of 26 ``clean`` rows -- a broad line legitimately pins at ``width_max``.
+Folding bit 4 into an OR would flag ~35 % of the corpus's solved rows and 34.2 % of the real run's,
+at which point the mask is useless. After converting column 8 to integers (see the user guide),
+``flags != 0`` selects any bit (42.5 % of the real run's solved spaxels) and
+``(flags & (1|2)) != 0`` selects fits with large or zero errors for inspection (11.2 %).
+The latter also includes exact fits and should not be treated as proof of an unconstrained fit.
 
 An amplitude term -- the normalised amplitude error against ``amplitude_rel_max -
 amplitude_rel_min`` -- was implemented first and then dropped: in the pipeline configuration those
 bounds are +/-10 % of the peak, a detection window rather than a physical range, so the term fires
-on ordinary low-SNR fits. Measured on the summed cube of a real run, adding it raises the flag rate
-from 11.2 % to 45.2 % of solved spaxels (1,384 of 3,459 against 205 for the velocity interval
-alone), i.e. it swamps the population the indicator is for. Dropping it also makes the predicate
-reproducible from the returned columns.
+on ordinary low-SNR fits: the amplitude term alone flags 1,384 of 3,459 spaxels (40.0 %),
+against 215 for the velocity interval (6.2 %). Dropping it also leaves bits
+1 and 2 reproducible from the returned columns.
 
-Measured rate (2026-09-11): 11.2 % of the 3,459 solved spaxels of the real run's summed cube at the
-pipeline configuration (``npix=2``, ``+/-500 km/s``, ``dv=40.740``, ``width`` 5-200 km/s), 7.4 % of
-the 336 solved rows of the ``muse`` C-reference corpus and 3.0 % of the 367 solved rows of the
-``wide`` corpus. The Muse-era 8-9 % figure quoted above counts spaxels with a *median velocity
-error* of 200-244 km/s, which is a different population and not the indicator's rate.
+The population is not backend-specific, which is worth stating because the bits are: on the same
+two rows and configuration, ``gaussfit_rs``, muse's C extension and muse's pure-Python fallback
+(``muse.fastfit.fitting_block.fit_single_spectrum_fallback``) all converge to the same parameters
+and reduced chi-square -- the two mpfit-family backends bit-for-bit, including their all-zero error
+columns (41 of 60 consecutive real rows bit-identical, the same 6 rows zeroed). Only the error
+columns differ between the families, and those are what the bits read: bit 2 catches the C/Python 0,
+bit 1 catches Rust's error being larger than the fitted range.
+
+Measured rates (2026-09-11), as fractions of solved fits:
+
+.. list-table::
+   :header-rows: 1
+
+   * - sample (solved rows)
+     - bit 1 span
+     - bit 2 zero
+     - bit 4 pegged
+     - any (``!= 0``)
+   * - real run summed cube, 3,459 (pipeline configuration)
+     - 6.2 %
+     - 5.6 %
+     - 34.2 %
+     - 42.5 %
+   * - ``muse`` corpus, 336
+     - 1.8 %
+     - 5.7 %
+     - 34.8 %
+     - 35.4 %
+   * - ``wide`` corpus, 367
+     - 3.0 %
+     - 0 %
+     - 11.2 %
+     - 11.2 %
+
+The real sample is the summed cube of a MUSE run at the pipeline configuration (``npix=2``,
+``+/-500 km/s``, ``dv=40.740``, ``width`` 5-200 km/s, noise 1.0); the corpora are fitted with their
+own recorded parameters, so their rates are directly comparable with the recorded C fits. The 8-9 %
+figure quoted above counts spaxels with a *median velocity error* of 200-244 km/s, which is a
+different population and not the indicator's rate.
 
 Limitations
 ~~~~~~~~~~~
 
-* A parameter pinned at a bound with small formal errors is not caught. Measured on the corpora,
-  including a pegged term would flag roughly 30 % of the ``muse`` solved rows, 15 of 15 ``broad``
-  rows among them: amplitude saturation is normal in that configuration (79 of 336 rows; the
-  ``wide`` corpus has none), so it is a modelling signal, not an unconstrained one. Widening the
-  criterion would cost the specificity that makes the indicator usable as a mask.
+* Bit 4 is a report, not a verdict, for the reason above; a consumer that masks on it will drop
+  good broad lines.
+* Bits 1 and 2 are reproducible from the returned columns alone; bit 4 is not, because it needs the
+  bounds (and the amplitude parameter is fitted in peak-normalised units, so its pegging is not
+  visible in the returned amplitude at all).
 * Faint lines whose errors are small for the wrong reason are not caught when the errors are
   nonzero. Just above the guard the cofactor is still near-singular, so a line far below the noise
   can return errors around 1e-6 (e.g. peak/noise ~0.2 with the amplitude and width bounds of the
@@ -216,10 +253,10 @@ Limitations
 Tests
 ~~~~~
 
-``src/tests/spectrum.rs::quality_flag_separates_constrained_and_unconstrained_fits`` (clean,
-velocity/width-driven, guard-zeroed and failed fits),
-``python/gaussfit_rs/tests/test_fit_single_spectrum.py::test_quality_flag_is_opt_in_and_reports_unconstrained_successes``
-and ``...::test_batch_quality_flags_match_the_documented_criterion`` (the batch indicator equals the
+``src/tests/spectrum.rs::quality_bits_separate_constrained_unconstrained_zero_and_pegged_fits``
+(clean, span, guard-zeroed, pegged and failed fits),
+``python/gaussfit_rs/tests/test_fit_single_spectrum.py::test_quality_bits_are_opt_in_and_report_unconstrained_successes``
+and ``...::test_batch_quality_bits_match_the_documented_criterion`` (bits 1 and 2 equal the
 velocity/width/zero rule recomputed from the returned columns), plus the figure suite
-(``test_quality_per_family``, and the ``UNC`` marker in ``test_fit_gallery`` /
+(``test_quality_per_family``, and the ``q`` marker in ``test_fit_gallery`` /
 ``test_family_overview``).

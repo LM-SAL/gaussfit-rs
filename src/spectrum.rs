@@ -1,5 +1,8 @@
 use crate::gaussian::{fit_gaussian_bounded_with_config, FitConfig};
-use crate::{FLAG_NO_CONVERGENCE, FLAG_NO_LOCAL_MAX, FLAG_SUCCESS};
+use crate::{
+    FLAG_NO_CONVERGENCE, FLAG_NO_LOCAL_MAX, FLAG_SUCCESS, QUALITY_PEGGED, QUALITY_UNCONSTRAINED,
+    QUALITY_ZERO_ERROR,
+};
 
 /// Internal result returned by `fit_single_spectrum_core`.
 #[derive(Clone, Copy, Debug)]
@@ -8,11 +11,8 @@ pub struct FitSingleSpectrumResult {
     pub(crate) fit_results: [f32; 8],
     pub(crate) i_left: i32,
     pub(crate) i_right: i32,
-    /// 1 when the fit succeeded but a parameter's formal error is not smaller
-    /// than the interval that parameter was bounded to, i.e. the data do not
-    /// constrain it. Opt-in quality output; see "Opt-In Unconstrained-Fit
-    /// Indicator" in `docs/design-notes.rst`.
-    pub(crate) unconstrained: u8,
+    /// Quality bitmask for successful fits; zero for failures. Exposed with `quality=True`.
+    pub(crate) quality: u8,
 }
 
 fn result_with_flag(flag: f32, i_left: i32, i_right: i32) -> FitSingleSpectrumResult {
@@ -22,7 +22,7 @@ fn result_with_flag(flag: f32, i_left: i32, i_right: i32) -> FitSingleSpectrumRe
         fit_results,
         i_left,
         i_right,
-        unconstrained: 0,
+        quality: 0,
     }
 }
 
@@ -218,28 +218,31 @@ fn fit_prepared_spectrum_window(
     fit_results[6] = outcome.bestnorm / dof;
     fit_results[7] = FLAG_SUCCESS;
 
-    // Opt-in quality flag (see "Opt-In Unconstrained-Fit Indicator" in
-    // docs/design-notes.rst): a parameter whose formal error is not smaller than
-    // the interval it was bounded to is not constrained by the data. Only the
-    // velocity and width intervals qualify as such a scale: the amplitude window
-    // is a detection window (+/-10 % of the peak in the pipeline configuration),
-    // so comparing against its width would flag ordinary low-SNR fits - measured
-    // on a real MUSE run it fired on 40 % of the solved spaxels, against 5.9 %
-    // for the velocity interval. An exactly zero error is flagged as well: it is
-    // physically impossible (the near-singular guard zeroes all three errors on
-    // near-zero-flux windows, where C's fallback still returns a finite number),
-    // and the span comparisons cannot see it.
-    let zero_error = outcome.errors.contains(&0.0);
-    let unconstrained = u8::from(
-        zero_error
-            || outcome.errors[1] >= 2.0 * vel_half_range
-            || outcome.errors[2] >= (width_max - width_min),
-    );
+    // Compare errors with the velocity and width spans. The amplitude bounds
+    // form a detection window; see the quality-bit rationale in docs/design-notes.rst.
+    let mut quality = 0u8;
+    if outcome.errors[1] >= 2.0 * vel_half_range || outcome.errors[2] >= (width_max - width_min) {
+        quality |= QUALITY_UNCONSTRAINED;
+    }
+    if outcome.errors.contains(&0.0) {
+        // This also occurs for exact fits because errors scale with residuals.
+        quality |= QUALITY_ZERO_ERROR;
+    }
+    if outcome
+        .params
+        .iter()
+        .zip(bounds.iter())
+        .any(|(param, bound)| *param == bound[0] || *param == bound[1])
+    {
+        // rmpfit clamps a parameter onto the bound exactly, so equality is the
+        // right test here.
+        quality |= QUALITY_PEGGED;
+    }
 
     FitSingleSpectrumResult {
         fit_results,
         i_left: i_left as i32,
         i_right: i_right as i32,
-        unconstrained,
+        quality,
     }
 }
