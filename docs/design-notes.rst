@@ -145,3 +145,36 @@ provenance for the pipeline data they come from, are in
 ``docs/improvement-todos.md`` (B4); they are not repeated here because the MUSE
 pipeline data is not part of this repository. If a future rmpfit release fixes
 ``lmpar`` upstream, drop the patch and delete the exception and this section.
+
+Opt-In Unconstrained-Fit Indicator
+----------------------------------
+
+- **Status:** resolved 2026-09-11; opt-in, default off.
+- **Owner:** Nabil Freij.
+- **Code:** ``src/spectrum.rs::fit_prepared_spectrum_window`` (the predicate),
+  ``src/api.rs`` (the ``quality`` keyword on the three spectrum entry points) and
+  ``python/gaussfit_rs/fitting.py`` (the public wrappers).
+- **Tests encoding current behavior:**
+  ``src/tests/spectrum.rs::quality_flag_separates_constrained_and_unconstrained_fits``,
+  ``python/gaussfit_rs/tests/test_fit_single_spectrum.py::test_quality_flag_is_opt_in_and_reports_unconstrained_successes``,
+  ``python/gaussfit_rs/tests/test_fit_single_spectrum.py::test_batch_quality_flags_match_the_documented_criterion``,
+  and the figure suite (``test_quality_per_family``, and the ``UNC`` marker in
+  ``test_fit_gallery`` / ``test_family_overview``).
+
+Current Behavior
+~~~~~~~~~~~~~~~~
+
+Both backends return ``FLAG_SUCCESS`` for spaxels whose parameters the data do not actually
+constrain. Measured on a real MUSE run: 8-9 % of spaxels carry a median velocity error of
+200-244 km/s while their amplitude is 2.6-3.6 against 17.8-18.9 overall, and the pipeline
+propagates them into the moments and area statistics. With ``quality=True`` those spaxels are
+reported through an extra return element instead of being indistinguishable from a good fit.
+
+Tradeoff
+~~~~~~~~
+
+The velocity and linewidth terms of the predicate are reproducible from the returned columns; the
+amplitude term is evaluated in the peak-normalised units the fit works in, so it cannot be
+recomputed from the returned errors alone. Keeping it means flat, line-less spaxels are caught;
+dropping it would make the whole predicate reproducible outside the kernel. The keyword is
+default-off, so the 8-column contract, the parity corpus and existing callers are untouched.

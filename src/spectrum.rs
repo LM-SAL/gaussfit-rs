@@ -8,6 +8,11 @@ pub struct FitSingleSpectrumResult {
     pub(crate) fit_results: [f32; 8],
     pub(crate) i_left: i32,
     pub(crate) i_right: i32,
+    /// 1 when the fit succeeded but a parameter's formal error is not smaller
+    /// than the interval that parameter was bounded to, i.e. the data do not
+    /// constrain it. Opt-in quality output; see "Opt-In Unconstrained-Fit
+    /// Indicator" in `docs/design-notes.rst`.
+    pub(crate) unconstrained: u8,
 }
 
 fn result_with_flag(flag: f32, i_left: i32, i_right: i32) -> FitSingleSpectrumResult {
@@ -17,6 +22,7 @@ fn result_with_flag(flag: f32, i_left: i32, i_right: i32) -> FitSingleSpectrumRe
         fit_results,
         i_left,
         i_right,
+        unconstrained: 0,
     }
 }
 
@@ -212,9 +218,20 @@ fn fit_prepared_spectrum_window(
     fit_results[6] = outcome.bestnorm / dof;
     fit_results[7] = FLAG_SUCCESS;
 
+    // Opt-in quality flag (see "Opt-In Unconstrained-Fit Indicator" in
+    // docs/design-notes.rst): a parameter whose formal error is not smaller than
+    // the interval it was bounded to is not constrained by the data. The
+    // amplitude error is in normalised units here, matching the amplitude bounds.
+    let unconstrained = u8::from(
+        outcome.errors[0] >= (amplitude_rel_max - amplitude_rel_min)
+            || outcome.errors[1] >= 2.0 * vel_half_range
+            || outcome.errors[2] >= (width_max - width_min),
+    );
+
     FitSingleSpectrumResult {
         fit_results,
         i_left: i_left as i32,
         i_right: i_right as i32,
+        unconstrained,
     }
 }
