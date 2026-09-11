@@ -232,17 +232,33 @@ fn quality_flag_separates_constrained_and_unconstrained_fits() {
     assert_eq!(clean.fit_results[7], FLAG_SUCCESS);
     assert_eq!(clean.unconstrained, 0);
 
-    // A faint line over structured noise: the fit succeeds, but its amplitude
-    // error is larger than the bound span, so it is reported unconstrained.
-    let saw: Vec<f32> = (0..v.len()).map(|i| 3.0 * ((i % 5) as f32 - 2.0)).collect();
+    // A faint line over structured noise: the fit succeeds, but its velocity and
+    // width errors (hundreds of km/s) exceed the intervals they were bounded to
+    // (2*dv*npix = 240 km/s and width_max - width_min = 95 km/s), so it is
+    // reported unconstrained. Mirror of the Python test's `noisy` row.
+    let checker: Vec<f32> = (0..v.len())
+        .map(|i| if i % 2 == 0 { 3.0 } else { -3.0 })
+        .collect();
     let faint: Vec<f32> = v
         .iter()
-        .zip(&saw)
+        .zip(&checker)
         .map(|(&x, &offset)| 0.5 * (-0.5 * (x / SIGMA_TRUE).powi(2)).exp() + offset)
         .collect();
     let unconstrained = fit_clean_spectrum_with_noise(&v, &faint, &vec![3.0; v.len()]);
     assert_eq!(unconstrained.fit_results[7], FLAG_SUCCESS);
+    assert!(unconstrained.fit_results[4] >= 2.0 * 12.0 * 10.0);
+    assert!(unconstrained.fit_results[5] >= 100.0 - 5.0);
     assert_eq!(unconstrained.unconstrained, 1);
+
+    // A noiseless line far too faint to constrain: the determinant falls under
+    // the near-singular guard, which zeroes all three formal errors, so the
+    // span comparisons see 0 and the zero-error rule has to flag it. The
+    // amplitude sits orders of magnitude below the level where the guard bites.
+    let tiny = gaussian_spectrum(&v, 1.0e-8, 0.0, SIGMA_TRUE);
+    let guarded = fit_clean_spectrum_with_noise(&v, &tiny, &vec![1.0; v.len()]);
+    assert_eq!(guarded.fit_results[7], FLAG_SUCCESS);
+    assert_eq!(&guarded.fit_results[3..6], &[0.0; 3]);
+    assert_eq!(guarded.unconstrained, 1);
 
     // Failed fits are excluded from the indicator; the result flag reports them.
     let failed = fit_clean_spectrum_with_noise(&v, &vec![-1.0; v.len()], &vec![0.05; v.len()]);

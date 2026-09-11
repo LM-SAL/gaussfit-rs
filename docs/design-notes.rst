@@ -165,16 +165,61 @@ Current Behavior
 ~~~~~~~~~~~~~~~~
 
 Both backends return ``FLAG_SUCCESS`` for spaxels whose parameters the data do not actually
-constrain. Measured on a real MUSE run: 8-9 % of spaxels carry a median velocity error of
-200-244 km/s while their amplitude is 2.6-3.6 against 17.8-18.9 overall, and the pipeline
-propagates them into the moments and area statistics. With ``quality=True`` those spaxels are
-reported through an extra return element instead of being indistinguishable from a good fit.
+constrain, and the pipeline propagates them into the moments and area statistics: on a real MUSE
+run 8-9 % of spaxels carry a median velocity error of 200-244 km/s while their amplitude is 2.6-3.6
+against 17.8-18.9 overall. With ``quality=True`` those spaxels are reported instead of being
+indistinguishable from a good fit: the call appends a ninth column to the result array
+(``fit_results[8]``, ``fit_results[:, 8]`` for a batch), 1 for a successful but unconstrained fit
+and 0 otherwise, including for failed fits.
 
-Tradeoff
-~~~~~~~~
+Criterion
+~~~~~~~~~
 
-The velocity and linewidth terms of the predicate are reproducible from the returned columns; the
-amplitude term is evaluated in the peak-normalised units the fit works in, so it cannot be
-recomputed from the returned errors alone. Keeping it means flat, line-less spaxels are caught;
-dropping it would make the whole predicate reproducible outside the kernel. The keyword is
-default-off, so the 8-column contract, the parity corpus and existing callers are untouched.
+A successful fit is flagged when any of:
+
+* the velocity error is not smaller than the velocity interval it was fitted in, ``2*dv*npix``;
+* the linewidth error is not smaller than ``width_max - width_min``;
+* any of the three errors is exactly 0. That is physically impossible; the near-singular guard
+  (``src/gaussian.rs``, ``|det| < 1e-30``) returns zeros on near-zero-flux windows, where the C
+  backend's fallback still returns a finite number. Measured on the summed cube of a real run, 193
+  of 3,459 solved spaxels are zeroed this way, and 19 of the 336 solved rows of the ``muse``
+  corpus.
+
+An amplitude term -- the normalised amplitude error against ``amplitude_rel_max -
+amplitude_rel_min`` -- was implemented first and then dropped: in the pipeline configuration those
+bounds are +/-10 % of the peak, a detection window rather than a physical range, so the term fires
+on ordinary low-SNR fits. Measured on the summed cube of a real run, adding it raises the flag rate
+from 11.2 % to 45.2 % of solved spaxels (1,384 of 3,459 against 205 for the velocity interval
+alone), i.e. it swamps the population the indicator is for. Dropping it also makes the predicate
+reproducible from the returned columns.
+
+Measured rate (2026-09-11): 11.2 % of the 3,459 solved spaxels of the real run's summed cube at the
+pipeline configuration (``npix=2``, ``+/-500 km/s``, ``dv=40.740``, ``width`` 5-200 km/s), 7.4 % of
+the 336 solved rows of the ``muse`` C-reference corpus and 3.0 % of the 367 solved rows of the
+``wide`` corpus. The Muse-era 8-9 % figure quoted above counts spaxels with a *median velocity
+error* of 200-244 km/s, which is a different population and not the indicator's rate.
+
+Limitations
+~~~~~~~~~~~
+
+* A parameter pinned at a bound with small formal errors is not caught. Measured on the corpora,
+  including a pegged term would flag roughly 30 % of the ``muse`` solved rows, 15 of 15 ``broad``
+  rows among them: amplitude saturation is normal in that configuration (79 of 336 rows; the
+  ``wide`` corpus has none), so it is a modelling signal, not an unconstrained one. Widening the
+  criterion would cost the specificity that makes the indicator usable as a mask.
+* Faint lines whose errors are small for the wrong reason are not caught when the errors are
+  nonzero. Just above the guard the cofactor is still near-singular, so a line far below the noise
+  can return errors around 1e-6 (e.g. peak/noise ~0.2 with the amplitude and width bounds of the
+  Rust tests) while carrying no information. Only the exactly-zero case is detectable from the
+  returned columns.
+
+Tests
+~~~~~
+
+``src/tests/spectrum.rs::quality_flag_separates_constrained_and_unconstrained_fits`` (clean,
+velocity/width-driven, guard-zeroed and failed fits),
+``python/gaussfit_rs/tests/test_fit_single_spectrum.py::test_quality_flag_is_opt_in_and_reports_unconstrained_successes``
+and ``...::test_batch_quality_flags_match_the_documented_criterion`` (the batch indicator equals the
+velocity/width/zero rule recomputed from the returned columns), plus the figure suite
+(``test_quality_per_family``, and the ``UNC`` marker in ``test_fit_gallery`` /
+``test_family_overview``).

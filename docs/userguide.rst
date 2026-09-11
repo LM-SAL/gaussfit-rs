@@ -124,24 +124,32 @@ Opt-in unconstrained-fit indicator
 ----------------------------------
 
 ``fit_single_spectrum``, ``fit_spectra_batch`` and ``fit_spectra_batch_guided`` accept
-``quality=True``, which appends one element to the returned tuple:
+``quality=True``, which appends one column to the result array:
 
-* single spectrum: ``(fit_results, window, unconstrained)``
-* batch: ``(fit_results, indices, unconstrained)``, a ``uint8`` array of shape ``(N,)``
+* single spectrum: ``(fit_results, window)``, where ``fit_results`` has shape ``(9,)``
+* batch: ``(fit_results, indices)``, where ``fit_results`` has shape ``(N, 9)``
 
-``unconstrained`` is 1 when the fit succeeded but the data do not constrain it: a parameter's
-formal 1-sigma error is not smaller than the interval that parameter was fitted in —
+Column 8 (``fit_results[8]``, or ``fit_results[:, 8]`` for a batch) is 1 when the fit succeeded but
+the data do not constrain it, and 0 otherwise — including for failed fits, which the flag column
+reports (use ``fit_results[:, 7]`` for those).  A fit is unconstrained when
 
-* amplitude: normalised amplitude error >= ``amplitude_rel_max - amplitude_rel_min``
-* velocity: error >= ``2 * dv * npix``
-* linewidth: error >= ``width_max - width_min``
+* the velocity error is not smaller than the velocity interval it was fitted in,
+  ``2 * dv * npix``; or
+* the linewidth error is not smaller than ``width_max - width_min``; or
+* any of the three errors is exactly 0, which no real fit produces — the near-singular guard
+  returns zeros on near-zero-flux windows.
 
-— and 0 otherwise, including for failed fits (use the flag column for those).  It is off by
-default, so result arity and numerics are unchanged for existing callers.
+The amplitude interval is deliberately not used: in the pipeline configuration it is a detection
+window of +/-10 % of the peak, so comparing against its width flags ordinary low-SNR fits rather
+than unconstrained ones (measured: 40 % of the solved spaxels of a real run, against 5.9 % for the
+velocity interval).
 
-``quality=True`` is how a consumer masks or down-weights the spaxels that fit "successfully" with
-velocity errors of hundreds of km/s; on a full MUSE run those are 8-9 % of spaxels.  See
-"Opt-In Unconstrained-Fit Indicator" in the design notes for the measurement.
+It is off by default, so result arity, dtypes and numerics are unchanged for existing callers.
+Turning it on is how a consumer masks or down-weights the spaxels that fit "successfully" with
+velocity errors of hundreds of km/s: on a real MUSE run that is **11.2 %** of the 3,459 solved
+spaxels of the summed cube, and 7.4 % / 3.0 % of the solved rows of the two C-reference corpora.
+See "Opt-In Unconstrained-Fit Indicator" in the design notes for the measurements and for the
+cases it does not catch.
 
 Input validation and tolerances
 -------------------------------

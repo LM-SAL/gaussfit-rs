@@ -1,9 +1,10 @@
 use num_traits::Float;
-use numpy::ndarray::{Array1, Array2};
-use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
+use numpy::ndarray::Array2;
+use numpy::{
+    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods,
+};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
-use pyo3::prelude::{pyfunction, Bound, IntoPyObject, PyAny, PyResult, Python};
-use pyo3::types::PyTuple;
+use pyo3::prelude::{pyfunction, Bound, PyResult, Python};
 use rayon::prelude::*;
 
 use crate::gaussian::{fit_gaussian_bounded_with_config, FitConfig};
@@ -161,7 +162,7 @@ pub(crate) fn fit_single_spectrum<'py>(
     gtol: f32,
     max_iter: isize,
     quality: bool,
-) -> PyResult<Bound<'py, PyAny>> {
+) -> PyResult<(Bound<'py, PyArray1<f32>>, (i32, i32))> {
     let sg_xpixels = validate_n_pixels(sg_xpixels)?;
     validate_spectrum_options(
         velocity_range,
@@ -210,14 +211,12 @@ pub(crate) fn fit_single_spectrum<'py>(
         config,
     );
 
-    let fits = result.fit_results.to_vec().into_pyarray(py);
-    let windows = PyTuple::new(py, [result.i_left, result.i_right])?;
+    let mut values = result.fit_results.to_vec();
     if quality {
-        let flag = result.unconstrained.into_pyobject(py)?;
-        Ok(PyTuple::new(py, [fits.into_any(), windows.into_any(), flag.into_any()])?.into_any())
-    } else {
-        Ok(PyTuple::new(py, [fits.into_any(), windows.into_any()])?.into_any())
+        // Opt-in ninth column: the unconstrained-fit indicator (see the design notes).
+        values.push(f32::from(result.unconstrained));
     }
+    Ok((values.into_pyarray(py), (result.i_left, result.i_right)))
 }
 
 /// Fit a bounded Gaussian to arbitrary (x, y ± error) data.
@@ -339,7 +338,7 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
     gtol: f32,
     max_iter: isize,
     quality: bool,
-) -> PyResult<Bound<'py, PyAny>> {
+) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<i32>>)> {
     let sg_xpixels = validate_n_pixels(sg_xpixels)?;
     validate_spectrum_options(
         velocity_range,
@@ -393,17 +392,18 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
 
     let dopp_window = &dopp_data[..sg_xpixels];
 
-    let mut fit_values = vec![f32::NAN; n_spectra * 8];
+    // The unconstrained-fit indicator is an opt-in ninth column, so the default
+    // eight-column contract stays byte-identical for every existing caller.
+    let stride = if quality { 9 } else { 8 };
+    let mut fit_values = vec![f32::NAN; n_spectra * stride];
     let mut idx_values = vec![0i32; n_spectra * 2];
-    let mut quality_values = vec![0u8; n_spectra];
 
     py.detach(|| {
         fit_values
-            .par_chunks_mut(8)
+            .par_chunks_mut(stride)
             .zip(idx_values.par_chunks_mut(2))
-            .zip(quality_values.par_chunks_mut(1))
             .enumerate()
-            .for_each(|(i, ((fit_row, idx_row), quality_row))| {
+            .for_each(|(i, (fit_row, idx_row))| {
                 let row_start = i * n_pixels;
                 let result = fit_single_spectrum_core(
                     &spectra_data[row_start..row_start + sg_xpixels],
@@ -421,26 +421,19 @@ pub(crate) fn fit_spectra_batch_guided<'py>(
                     width_guess,
                     config,
                 );
-                fit_row.copy_from_slice(&result.fit_results);
+                fit_row[..8].copy_from_slice(&result.fit_results);
+                if quality {
+                    fit_row[8] = f32::from(result.unconstrained);
+                }
                 idx_row[0] = result.i_left;
                 idx_row[1] = result.i_right;
-                quality_row[0] = result.unconstrained;
             })
     });
 
-    let fits = Array2::<f32>::from_shape_vec((n_spectra, 8), fit_values)
-        .map_err(|_| PyRuntimeError::new_err("failed to build fit result array"))?
-        .into_pyarray(py);
-    let windows = Array2::<i32>::from_shape_vec((n_spectra, 2), idx_values)
-        .map_err(|_| PyRuntimeError::new_err("failed to build index result array"))?
-        .into_pyarray(py);
+    let fit_out = Array2::<f32>::from_shape_vec((n_spectra, stride), fit_values)
+        .map_err(|_| PyRuntimeError::new_err("failed to build fit result array"))?;
+    let idx_out = Array2::<i32>::from_shape_vec((n_spectra, 2), idx_values)
+        .map_err(|_| PyRuntimeError::new_err("failed to build index result array"))?;
 
-    if quality {
-        let flags = Array1::<u8>::from_shape_vec(n_spectra, quality_values)
-            .map_err(|_| PyRuntimeError::new_err("failed to build quality array"))?
-            .into_pyarray(py);
-        Ok(PyTuple::new(py, [fits.into_any(), windows.into_any(), flags.into_any()])?.into_any())
-    } else {
-        Ok(PyTuple::new(py, [fits.into_any(), windows.into_any()])?.into_any())
-    }
+    Ok((fit_out.into_pyarray(py), idx_out.into_pyarray(py)))
 }

@@ -124,7 +124,7 @@ def fit_single_spectrum(
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
     quality: bool = False,
-) -> tuple[NDArray[np.float32], tuple[int, int]] | tuple[NDArray[np.float32], tuple[int, int], int]:
+) -> tuple[NDArray[np.float32], tuple[int, int]]:
     """
     Fit a single Gaussian to one spectrum using the Rust backend.
 
@@ -175,18 +175,22 @@ def fit_single_spectrum(
     max_iter:
         Maximum LM iterations (default 2000).
     quality:
-        When True, also return a 0/1 unconstrained-fit flag: 1 when the fit
-        succeeded but a parameter's formal error is not smaller than the
-        interval that parameter was bounded to, i.e. the data do not constrain
-        it.  The flag is 0 for failed fits; use the result flag column for those.
-        Defaults to False.  See "Opt-In Unconstrained-Fit Indicator" in the
-        design notes.
+        When True, an unconstrained-fit indicator is appended to *fit_results*
+        as a ninth column: 1 when the fit succeeded but a parameter's formal
+        error is not smaller than the interval that parameter was bounded to,
+        so the data do not constrain it; also 1 when an error is exactly 0,
+        which is impossible in a real fit and is what the near-singular guard
+        returns.  The indicator is 0 for failed fits; the result flag column
+        reports those.  Defaults to False, which keeps the eight-column
+        contract.  See "Opt-In Unconstrained-Fit Indicator" in the design
+        notes.
 
     Returns
     -------
-    fit_results : ndarray, shape (8,), float32
+    fit_results : ndarray, shape (8,) or (9,), float32
         ``[amplitude, velocity, sigma, amplitude_err, velocity_err, sigma_err,
-        reduced_chi2, flag]``.  See module docstring for details.
+        reduced_chi2, flag]``.  See module docstring for details.  With
+        ``quality=True`` a ninth element holds the unconstrained-fit indicator.
     (i_left, i_right) : tuple[int, int]
         Pixel indices of the fitting window used (half-open, ``[i_left, i_right)``).
     """
@@ -245,10 +249,7 @@ def fit_spectra_batch(
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
     quality: bool = False,
-) -> (
-    tuple[NDArray[np.float32], NDArray[np.int32]]
-    | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.uint8]]
-):
+) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
     """
     Fit Gaussians to N spectra in parallel using all available CPU cores.
 
@@ -275,14 +276,12 @@ def fit_spectra_batch(
 
     Returns
     -------
-    fit_results : ndarray, shape (N, 8), float32
+    fit_results : ndarray, shape (N, 8) or (N, 9), float32
         One result row per input spectrum.  Column layout same as
-        :func:`fit_single_spectrum`.
+        :func:`fit_single_spectrum`; the ninth column, present only with
+        ``quality=True``, holds the unconstrained-fit indicator.
     indices : ndarray, shape (N, 2), int32
         ``[:, 0]`` = i_left, ``[:, 1]`` = i_right for each spectrum.
-    quality_flags : ndarray, shape (N,), uint8
-        Present only when ``quality=True``: 1 where the fit succeeded but is not
-        constrained by the data, 0 otherwise.
 
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
@@ -332,10 +331,7 @@ def fit_spectra_batch_guided(
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
     quality: bool = False,
-) -> (
-    tuple[NDArray[np.float32], NDArray[np.int32]]
-    | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.uint8]]
-):
+) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
     """
     Fit Gaussians to N spectra in parallel with one guide velocity per row.
 
