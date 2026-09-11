@@ -30,8 +30,9 @@ Current Behavior
 
 This means ``npix_slack`` is a local-maximum vetting band, not an acceptance
 band. A peak found only in the slack band is rejected. This matches the MUSE C
-extension (pinned as the test reference under ``third_party/c_reference``) and
-avoids false-positive fits when the expected line is absent.
+extension (pinned as the test reference under ``third_party/c_reference``).
+It does not establish a line detection: a positive noise peak inside the strict
+search interval can still be fitted successfully.
 
 Tradeoff
 ~~~~~~~~
@@ -84,17 +85,19 @@ windows fitted by both), stock rmpfit was worse than C on 13 rows and C was
 worse than rmpfit on 13 others, judged by the same tolerance.
 
 The vendored rmpfit records which bound set ``alpha`` and places that coordinate
-exactly on its limit. Measured effect: 18 of 14,197 windows change, every one
-an improvement; no window is worse than C f32, C f64 or stock rmpfit; Rust is
-never worse than C on the 46 seeds the live parity test runs, nor on a
-100-seed sweep (82,368 fits).
+exactly on its limit. With the bound-snap patch alone, the recorded measurements
+were: 18 of 14,197 windows change, every one an improvement; no window is worse
+than C f32, C f64 or stock rmpfit; Rust is never worse than C on the 46-seed live
+parity test or a 100-seed sweep (82,368 fits). The subsequent ``lmpar`` correction
+below introduces one documented exception to that last claim.
 
 Tradeoff
 ~~~~~~~~
 
 Rust now beats the C reference on the windows where C stalls. The parity
-contract in ``helpers.assert_fit_parity`` is one-sided (Rust never worse), so
-this is allowed and expected. Do not "repair" the corpus or widen the
+contract in ``helpers.assert_fit_parity`` is one-sided, apart from the named
+``lmpar`` exception below, so improvements are allowed and expected. Do not
+"repair" the corpus or widen the
 tolerance to make those rows agree.
 
 The patch is carried as a path dependency on ``third_party/rmpfit``. Dependabot
@@ -118,11 +121,13 @@ dropped.
 Current Behavior
 ~~~~~~~~~~~~~~~~
 
-rmpfit clamps the trust-region radius with ``self.par = self.par.max(paru)``
-where CMPFIT and MINPACK clamp the upper end with ``min`` (C reference:
+Upstream rmpfit 2.0.0 clamps the Levenberg-Marquardt damping parameter ``par``
+with ``self.par = self.par.max(paru)`` where CMPFIT and MINPACK use ``min``
+(C reference:
 ``third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102``). Every other line of the
-``lmpar`` clamp/update sequence matches, so this is a one-token port deviation,
-now corrected locally.
+``lmpar`` clamp/update sequence matches. The vendored code corrects this with
+``self.par = self.par.min(paru)``. The trust-region radius is ``delta``; it is
+not the variable changed by this patch.
 
 Tradeoff
 ~~~~~~~~
@@ -137,14 +142,12 @@ that row so the other 39 low-SNR rows stay under the gate, and asserted to be
 taken exactly once, so the exception cannot silently go stale and the one-sided
 contract stays meaningful everywhere else.
 
-On a full MUSE run (2026-09-11) the change is close to chi-square-neutral and
-slightly closer to the C reference: the clean GT product is bit-identical, the
-gate's 0.5 % chi-square criterion is never newly violated, and roughly two thirds
-of the pixels whose fits change move toward C. Per-product measurements, and the
-provenance for the pipeline data they come from, are in
-``docs/improvement-todos.md`` (B4); they are not repeated here because the MUSE
-pipeline data is not part of this repository. If a future rmpfit release fixes
-``lmpar`` upstream, drop the patch and delete the exception and this section.
+``docs/improvement-todos.md`` (B4) records separate pipeline comparisons on MUSE
+simulation data. Those measurements are not an observational validation and are
+not part of the committed parity fixtures. If a future rmpfit release fixes
+``lmpar`` upstream, drop the local patch after checking parity. Keep the exception
+until the corresponding row actually satisfies the normal gate: moving the same
+fix upstream does not by itself change that row's behavior.
 
 Opt-In Unconstrained-Fit Indicator
 ----------------------------------
@@ -158,24 +161,27 @@ Opt-In Unconstrained-Fit Indicator
 Current Behavior
 ~~~~~~~~~~~~~~~~
 
-Both backends return ``FLAG_SUCCESS`` for spaxels whose parameters the data do not actually
-constrain, and the pipeline propagates them into the moments and area statistics: on a real MUSE
-run 8-9 % of spaxels carry a median velocity error of 200-244 km/s while their amplitude is 2.6-3.6
-against 17.8-18.9 overall. With ``quality=True`` those spaxels are reported instead of being
-indistinguishable from a good fit: the call appends a ninth column to the result array
-(``fit_results[8]``, ``fit_results[:, 8]`` for a batch), 0 for failed fits and otherwise a mask of
-three bits.
+Both backends can return ``FLAG_SUCCESS`` for weakly constrained fits, including
+fits to positive noise fluctuations. Convergence does not establish a detected
+line or a reliable parameter measurement. With ``quality=True``, the spectrum
+entry points append a ninth float32 column (``fit_results[8]``, or
+``fit_results[:, 8]`` for a batch) reporting three quality bits. Failed fits have
+zero quality bits and must be checked separately using column 7. The default
+eight-column output and the fitted values are unchanged by enabling quality.
 
 Bits, not a boolean
 ~~~~~~~~~~~~~~~~~~~
 
 * **1 (``QUALITY_UNCONSTRAINED``)** -- the velocity error is not smaller than ``2*dv*npix``, or the
-  linewidth error is not smaller than ``width_max - width_min``. This is the "the data do not
-  determine this parameter" answer.
+  linewidth error is not smaller than ``width_max - width_min``. This reports a
+  formal error at least as large as a parameter's allowed interval; it is a
+  diagnostic threshold, not a calibrated detection or confidence test.
 * **2 (``QUALITY_ZERO_ERROR``)** -- a formal error is exactly 0. The near-singular guard
-  (``src/gaussian.rs``, ``|det| < 1e-30``) returns zeros on near-zero-flux windows, but it is not
-  the only cause: errors also scale with the residuals, so an exact fit can produce zeros with
-  a nonsingular Hessian. This bit reports the error value, not its cause.
+  (``src/gaussian.rs``, nonfinite determinant or ``|det| < 1e-30``) returns zeros.
+  Nonpositive computed variances also become zero, and residual scaling can
+  produce zeros on an exact fit with a nonsingular matrix. The absolute
+  determinant threshold depends on scale; a small determinant alone is not a
+  condition-number test. This bit reports the error value, not its cause.
 * **4 (``QUALITY_PEGGED``)** -- a fitted parameter sits exactly on one of its bounds (rmpfit clamps
   onto the bound exactly, so equality is the test).
 
@@ -183,28 +189,23 @@ They are reported separately because they mean different things and a single boo
 policy on every consumer. Measured on the ``muse`` corpus (336 solved rows, 117 with bit 4 = 34.8 %),
 pegging is *not* evidence of an unconstrained fit: 15 of 15 ``broad`` rows and 11 of 17 ``narrow``
 rows set it, but so do 5 of 26 ``clean`` rows -- a broad line legitimately pins at ``width_max``.
-Folding bit 4 into an OR would flag ~35 % of the corpus's solved rows and 34.2 % of the real run's,
-at which point the mask is useless. After converting column 8 to integers (see the user guide),
-``flags != 0`` selects any bit (42.5 % of the real run's solved spaxels) and
-``(flags & (1|2)) != 0`` selects fits with large or zero errors for inspection (11.2 %).
-The latter also includes exact fits and should not be treated as proof of an unconstrained fit.
+After converting column 8 to integers (see the user guide), ``flags != 0``
+selects any bit and ``(flags & (1|2)) != 0`` selects large or zero errors for
+inspection. Neither is an automatic rejection policy: pegged and exact fits
+can be legitimate, and an unflagged fit is not guaranteed to be useful.
 
-An amplitude term -- the normalised amplitude error against ``amplitude_rel_max -
-amplitude_rel_min`` -- was implemented first and then dropped: in the pipeline configuration those
-bounds are +/-10 % of the peak, a detection window rather than a physical range, so the term fires
-on ordinary low-SNR fits: the amplitude term alone flags 1,384 of 3,459 spaxels (40.0 %),
-against 215 for the velocity interval (6.2 %). Dropping it also leaves bits
-1 and 2 reproducible from the returned columns.
+The amplitude interval is deliberately excluded: the MUSE configuration uses
++/-10 % of the normalization peak, a detection window rather than a physical
+range. Comparing the amplitude error with that interval would also flag
+ordinary low-SNR fits.
 
-The population is not backend-specific, which is worth stating because the bits are: on the same
-two rows and configuration, ``gaussfit_rs``, muse's C extension and muse's pure-Python fallback
-(``muse.fastfit.fitting_block.fit_single_spectrum_fallback``) all converge to the same parameters
-and reduced chi-square -- the two mpfit-family backends bit-for-bit, including their all-zero error
-columns (41 of 60 consecutive real rows bit-identical, the same 6 rows zeroed). Only the error
-columns differ between the families, and those are what the bits read: bit 2 catches the C/Python 0,
-bit 1 catches Rust's error being larger than the fitted range.
+The MUSE ``fit_single_spectrum_fallback`` calls ``ftoolss.fmpfit_f32_pywrap``,
+which delegates to a C extension. Its agreement with the direct C path is not
+an independent pure-Python solver comparison. The quality column is implemented
+in gaussfit-rs; the C path would need its own implementation to return it.
 
-Measured rates (2026-09-11), as fractions of solved fits:
+Measured rates (2026-09-11), as fractions of successful fits in the synthetic
+C-reference fixtures, using each fixture's recorded configuration:
 
 .. list-table::
    :header-rows: 1
@@ -214,11 +215,6 @@ Measured rates (2026-09-11), as fractions of solved fits:
      - bit 2 zero
      - bit 4 pegged
      - any (``!= 0``)
-   * - real run summed cube, 3,459 (pipeline configuration)
-     - 6.2 %
-     - 5.6 %
-     - 34.2 %
-     - 42.5 %
    * - ``muse`` corpus, 336
      - 1.8 %
      - 5.7 %
@@ -230,25 +226,82 @@ Measured rates (2026-09-11), as fractions of solved fits:
      - 11.2 %
      - 11.2 %
 
-The real sample is the summed cube of a MUSE run at the pipeline configuration (``npix=2``,
-``+/-500 km/s``, ``dv=40.740``, ``width`` 5-200 km/s, noise 1.0); the corpora are fitted with their
-own recorded parameters, so their rates are directly comparable with the recorded C fits. The 8-9 %
-figure quoted above counts spaxels with a *median velocity error* of 200-244 km/s, which is a
-different population and not the indicator's rate.
+Saved Simulation Examples And Covariance Errors
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The saved ``baseline_gpu/spectrum_summed_all.zarr`` input is MURaM-based MUSE
+simulation output. Its configuration names a VDEM model and has a null
+observational filename. An earlier report fitted a reconstructed velocity axis
+with a +/-500 km/s search and sigma bounds of 5-200 km/s. The saved Fe XIX
+pipeline output instead uses its response-derived per-slit axis, a +/-300 km/s
+search, minimum sigma 59.216967 km/s, initial sigma equal to that minimum plus
+10 km/s, and no peak-search slack. Both examples use ``npix=2`` and fitting
+noise of 1 DN, not the cube's stored measurement-error array.
+
+The earlier 11.2 % suspect and 42.5 % any-bit figures are not validated rates
+for the saved pipeline configuration or observations. The following selected
+examples establish problematic fits, not an occurrence rate:
+
+* With the reconstructed settings, flattened row 379 fits pixels ``[522, 527)``
+  with flux ``[6, -1, 9, 0, 4]`` DN. Rust returns sigma 7.5834 km/s, below the
+  40.74-km/s sample spacing, and velocity error 1,124,729.75 km/s. C returns
+  similar parameters and zero errors; both report success.
+* The largest successful saved Fe XIX velocity error occurs at line index 0,
+  y index 89, x index 30 (slit index 5, step index 0). Refitting with the saved
+  configuration reproduces all eight Rust values and the mask ``[170, 175)``.
+  Flux is ``[6, 0, 1, 1, 1]`` DN. Rust and C return velocity errors of
+  3837.236572 and 3837.231201 km/s respectively; Rust quality is 5. The
+  normalization peak is 1 DN because the 6-DN sample is outside the peak-search
+  interval, although it lies inside the fit window. The fit reaches its
+  amplitude upper, velocity lower, and sigma upper bounds.
+
+The MUSE benchmark applies an intensity mask after fitting, before comparison
+statistics. For the saved example, fitted net flux is 13.5453 DN against a
+62.9021-DN threshold; both the GFAT intensity mask and the saved ground-truth
+mask reject it. The saved combined mask also rejects it. Its presence in
+``mom_gfat`` does not demonstrate contamination of the masked statistics.
+The ninth-column diagnostics complement the caller's masking; their benefit
+for the retained population needs to be measured on that population.
+
+The stored ``clean_flux`` trace also needs care. MUSE preserves the expected
+signal before Poisson sampling, but the inspected ``ph2dn`` path converts only
+``flux``. The readout step truncates ``clean_flux`` to integers and labels it
+DN. The saved zeros therefore do not establish zero emission or a calibrated
+DN expectation. The floating-point pre-noise synthesis gives nonzero expected
+photons in both cuts: approximately 0.38-0.95 per sample in the reconstructed
+example and 0.022-0.051 in the saved pipeline example.
+
+Both implementations form the weighted Gaussian Jacobian ``J`` and derive
+formal errors from the inverse of ``J.T @ J``, scaled by
+``sqrt(chi2 / (N - 3))`` when ``N > 3``. These are local covariance estimates,
+not confidence intervals respecting the bounds. In the narrow example, the
+C float32 cofactor calculation produces determinant ``-8.0409013e-11`` and
+negative diagonal variances. ``mp_xerror_scipy`` accepts ``abs(det) > 1e-30``
+and explicitly converts nonpositive variances to zero. This example does not
+enter the Gauss-Jordan fallback; the success status is determined separately.
+
+Rust computes covariance in float64 at its internal parameters and retains
+positive variances here. Its million-scale uncertainty is numerically unstable:
+direct SVD of the Jacobian at the rounded returned parameters gives about
+2.89 million km/s. In the saved pipeline example, SVD gives 3837.23663 km/s,
+agreeing with both backends. A rank-aware QR/SVD covariance calculation would
+address inversion instability; it would not by itself change residual scaling
+or establish a detection.
 
 Limitations
 ~~~~~~~~~~~
 
 * Bit 4 is a report, not a verdict, for the reason above; a consumer that masks on it will drop
   good broad lines.
-* Bits 1 and 2 are reproducible from the returned columns alone; bit 4 is not, because it needs the
-  bounds (and the amplitude parameter is fitted in peak-normalised units, so its pegging is not
-  visible in the returned amplitude at all).
-* Faint lines whose errors are small for the wrong reason are not caught when the errors are
-  nonzero. Just above the guard the cofactor is still near-singular, so a line far below the noise
-  can return errors around 1e-6 (e.g. peak/noise ~0.2 with the amplitude and width bounds of the
-  Rust tests) while carrying no information. Only the exactly-zero case is detectable from the
-  returned columns.
+* The span bit needs the returned errors and configured velocity/width intervals.
+  Reconstructing pegging additionally needs the actual bounds and normalization
+  peak; the physical amplitude alone does not identify its normalized bound.
+* Residual scaling can produce small nonzero errors for a nearly exact noiseless
+  fit, even with a nonsingular matrix. Covariance inversion can also be unstable.
+  Zero-error detection alone does not identify all unreliable uncertainties.
+* A positive peak is not a signal-to-noise test, and a zero quality mask is not a
+  detection certificate. Apply the caller's intensity masks and evaluate any
+  additional quality policy on the fits that survive them.
 
 Tests
 ~~~~~
