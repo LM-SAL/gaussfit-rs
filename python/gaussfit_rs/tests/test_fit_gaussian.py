@@ -1,5 +1,5 @@
 """
-Tests for fit_gaussian_f32.
+Tests for fit_gaussian.
 """
 
 import numpy as np
@@ -8,7 +8,7 @@ import pytest
 from gaussfit_rs import (
     FLAG_NO_CONVERGENCE,
     FLAG_SUCCESS,
-    fit_gaussian_f32,
+    fit_gaussian,
 )
 
 
@@ -23,9 +23,9 @@ def _make_data(amp=1.0, mean=0.0, sigma=1.0, noise=0.01, dtype=np.float32, n=20)
     return x, y, err
 
 
-def test_f32_recovers_unit_gaussian():
+def test_recovers_unit_gaussian():
     x, y, err = _make_data()
-    r = fit_gaussian_f32(
+    r = fit_gaussian(
         x=x,
         y=y,
         error=err,
@@ -39,9 +39,9 @@ def test_f32_recovers_unit_gaussian():
     assert abs(r[2] - 1.0) < 1e-3, f"sigma={r[2]}"
 
 
-def test_f32_output_shape_and_dtype():
+def test_output_shape_and_dtype():
     x, y, err = _make_data()
-    r = fit_gaussian_f32(
+    r = fit_gaussian(
         x=x,
         y=y,
         error=err,
@@ -53,9 +53,9 @@ def test_f32_output_shape_and_dtype():
     assert r.dtype == np.float32
 
 
-def test_f32_no_convergence_flag_on_impossible_bounds():
+def test_no_convergence_flag_on_impossible_bounds():
     x, y, err = _make_data()
-    r = fit_gaussian_f32(
+    r = fit_gaussian(
         x=x,
         y=y,
         error=err,
@@ -67,9 +67,9 @@ def test_f32_no_convergence_flag_on_impossible_bounds():
     assert r[7] in (FLAG_SUCCESS, FLAG_NO_CONVERGENCE)
 
 
-def test_f32_nan_results_on_no_convergence():
+def test_nan_results_on_no_convergence():
     x, y, err = _make_data()
-    r = fit_gaussian_f32(
+    r = fit_gaussian(
         x=x,
         y=y,
         error=err,
@@ -84,11 +84,11 @@ def test_f32_nan_results_on_no_convergence():
         assert np.isnan(r[2])
 
 
-def test_f32_max_iter_one_reports_no_convergence():
+def test_max_iter_one_reports_no_convergence():
     x = np.linspace(-3, 3, 80, dtype=np.float32)
     y = _gaussian(x, 2.5, 1.2, 0.4).astype(np.float32)
     err = np.full_like(x, 0.01)
-    r = fit_gaussian_f32(
+    r = fit_gaussian(
         x=x,
         y=y,
         error=err,
@@ -101,10 +101,10 @@ def test_f32_max_iter_one_reports_no_convergence():
     assert np.all(np.isnan(r[:7]))
 
 
-def test_f32_raises_on_nan_tolerance():
+def test_raises_on_nan_tolerance():
     x, y, err = _make_data()
     with pytest.raises(ValueError, match="finite"):
-        fit_gaussian_f32(
+        fit_gaussian(
             x=x,
             y=y,
             error=err,
@@ -115,10 +115,10 @@ def test_f32_raises_on_nan_tolerance():
         )
 
 
-def test_f32_raises_on_invalid_bounds():
+def test_raises_on_invalid_bounds():
     x, y, err = _make_data()
     with pytest.raises(ValueError, match="bounds"):
-        fit_gaussian_f32(
+        fit_gaussian(
             x=x,
             y=y,
             error=err,
@@ -128,10 +128,10 @@ def test_f32_raises_on_invalid_bounds():
         )
 
 
-def test_f32_raises_on_non_positive_sigma_lower_bound():
+def test_raises_on_non_positive_sigma_lower_bound():
     x, y, err = _make_data()
     with pytest.raises(ValueError, match="sigma lower bound"):
-        fit_gaussian_f32(
+        fit_gaussian(
             x=x,
             y=y,
             error=err,
@@ -141,10 +141,10 @@ def test_f32_raises_on_non_positive_sigma_lower_bound():
         )
 
 
-def test_f32_raises_on_wrong_param_length():
+def test_raises_on_wrong_param_length():
     x, y, err = _make_data()
     with pytest.raises(ValueError, match="exactly 3"):
-        fit_gaussian_f32(
+        fit_gaussian(
             x=x,
             y=y,
             error=err,
@@ -154,11 +154,11 @@ def test_f32_raises_on_wrong_param_length():
         )
 
 
-def test_f32_raises_on_non_positive_error():
+def test_raises_on_non_positive_error():
     x, y, err = _make_data()
     err[0] = 0.0
     with pytest.raises(ValueError, match="error values"):
-        fit_gaussian_f32(
+        fit_gaussian(
             x=x,
             y=y,
             error=err,
@@ -168,9 +168,9 @@ def test_f32_raises_on_non_positive_error():
         )
 
 
-def test_f32_non_contiguous_input_accepted():
+def test_non_contiguous_input_accepted():
     x, y, err = _make_data()
-    r = fit_gaussian_f32(
+    r = fit_gaussian(
         x=x[::1],
         y=y[::1],
         error=err[::1],
@@ -181,10 +181,10 @@ def test_f32_non_contiguous_input_accepted():
     assert r[7] == FLAG_SUCCESS
 
 
-def test_f32_raises_on_length_mismatch():
+def test_raises_on_length_mismatch():
     x, y, err = _make_data()
     with pytest.raises(ValueError, match="same length"):
-        fit_gaussian_f32(
+        fit_gaussian(
             x=x[:-1],
             y=y,
             error=err,
@@ -194,12 +194,12 @@ def test_f32_raises_on_length_mismatch():
         )
 
 
-def test_f32_raises_on_too_few_samples():
+def test_raises_on_too_few_samples():
     x = np.array([0.0, 1.0], dtype=np.float32)
     y = np.array([1.0, 0.5], dtype=np.float32)
     err = np.array([0.1, 0.1], dtype=np.float32)
     with pytest.raises(ValueError, match="at least 3"):
-        fit_gaussian_f32(
+        fit_gaussian(
             x=x,
             y=y,
             error=err,
@@ -209,9 +209,9 @@ def test_f32_raises_on_too_few_samples():
         )
 
 
-def test_f32_recovers_offset_gaussian():
+def test_recovers_offset_gaussian():
     x, y, err = _make_data(mean=2.5, sigma=0.5)
-    r = fit_gaussian_f32(
+    r = fit_gaussian(
         x=x,
         y=y,
         error=err,
@@ -224,9 +224,9 @@ def test_f32_recovers_offset_gaussian():
     assert abs(r[2] - 0.5) < 0.05, f"sigma={r[2]}"
 
 
-def test_f32_dtype_auto_conversion():
+def test_dtype_auto_conversion():
     x, y, err = _make_data()
-    r = fit_gaussian_f32(
+    r = fit_gaussian(
         x=x.astype(np.float64),
         y=y.astype(np.float64),
         error=err.astype(np.float64),
@@ -238,7 +238,7 @@ def test_f32_dtype_auto_conversion():
     assert r[7] == FLAG_SUCCESS
 
 
-def test_f32_bound_limited_step_does_not_stall():
+def test_bound_limited_step_does_not_stall():
     # Regression guard for the MPFIT bound-snap stall fixed in third_party/rmpfit
     # (VENDORED.md). C-parity corpus window "wide" seed 1 row 314, normalised by the
     # peak: sigma belongs on width_min. Stock rmpfit 2.0.0 lands sigma two ULP above
@@ -275,7 +275,7 @@ def test_f32_bound_limited_step_does_not_stall():
         ],
         dtype=np.float32,
     )
-    r = fit_gaussian_f32(
+    r = fit_gaussian(
         x=x,
         y=y,
         error=np.full(11, 0.031336888670921326, dtype=np.float32),
@@ -286,3 +286,23 @@ def test_f32_bound_limited_step_does_not_stall():
     assert r[7] == FLAG_SUCCESS
     assert r[6] < 1.0, f"reduced chi2 {r[6]}"
     assert r[0] > 1.0, f"amplitude {r[0]}"
+
+
+def test_meta_counts_are_opt_in():
+    x, y, err = _make_data()
+    kwargs = {
+        "x": x,
+        "y": y,
+        "error": err,
+        "initial": np.array([0.9, 0.1, 0.8], dtype=np.float32),
+        "lower_bounds": np.array([0.1, -2.0, 0.2], dtype=np.float32),
+        "upper_bounds": np.array([2.0, 2.0, 3.0], dtype=np.float32),
+    }
+    row = fit_gaussian(**kwargs)
+    assert row.shape == (8,)
+    row_meta, counts = fit_gaussian(**kwargs, meta=True)
+    np.testing.assert_array_equal(row_meta, row)
+    assert counts.dtype == np.int32
+    assert counts[1] >= counts[0] >= 1
+    _, failed = fit_gaussian(**kwargs, max_iter=1, meta=True)
+    np.testing.assert_array_equal(failed, [-1, -1])

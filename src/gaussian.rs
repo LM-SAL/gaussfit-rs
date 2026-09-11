@@ -1,22 +1,29 @@
-use num_traits::Float;
-use rmpfit::{MPConfig, MPFitter, MPPar, MPResult, MPSide, MPSuccess};
+use std::cell::RefCell;
+
+use rmpfit::{MPConfig, MPFitter, MPPar, MPResult, MPSide, MPSuccess, MPWorkspace};
 
 use crate::{FTOL, GTOL, MAX_ITER, XTOL};
 
+thread_local! {
+    // One solver workspace per thread (Rayon workers included): after the
+    // first fit on a thread, a fit makes no heap allocations.
+    static WORKSPACE: RefCell<MPWorkspace> = RefCell::new(MPWorkspace::default());
+}
+
 /// Convergence tolerances and iteration limit for the LM solver.
 #[derive(Clone, Copy, Debug)]
-pub struct FitConfig<F: Float = f32> {
+pub struct FitConfig {
     /// Parameter step size tolerance.
-    pub xtol: F,
+    pub xtol: f32,
     /// Cost-function change tolerance.
-    pub ftol: F,
+    pub ftol: f32,
     /// Gradient norm tolerance.
-    pub gtol: F,
+    pub gtol: f32,
     /// Maximum outer LM iterations.
     pub max_iter: usize,
 }
 
-impl Default for FitConfig<f32> {
+impl Default for FitConfig {
     fn default() -> Self {
         Self {
             xtol: XTOL,
@@ -27,51 +34,43 @@ impl Default for FitConfig<f32> {
     }
 }
 
-// Tighter than the f32 default to exploit the extra precision.
-impl Default for FitConfig<f64> {
-    fn default() -> Self {
-        Self {
-            xtol: 1.0e-10,
-            ftol: 1.0e-10,
-            gtol: 1.0e-10,
-            max_iter: MAX_ITER,
-        }
-    }
-}
-
 /// Fitted Gaussian parameters returned by the LM solver.
 #[derive(Clone, Copy, Debug)]
-pub struct FitOutcome<F: Float = f32> {
+pub struct FitOutcome {
     /// `[amplitude, mean, sigma]`
-    pub(crate) params: [F; 3],
+    pub(crate) params: [f32; 3],
     /// 1-sigma parameter errors `[amp_err, mean_err, sigma_err]`
-    pub(crate) errors: [F; 3],
+    pub(crate) errors: [f32; 3],
     /// Sum of squared weighted residuals at the best-fit parameters.
-    pub(crate) bestnorm: F,
+    pub(crate) bestnorm: f32,
+    /// Accepted Levenberg-Marquardt iterations.
+    pub(crate) n_iter: usize,
+    /// Model evaluations, Jacobian calls included.
+    pub(crate) n_fev: usize,
 }
 
 /// Weighted-residual problem handed to the MPFIT (rmpfit) solver.
 ///
 /// Residuals are `(y - amp * exp(-0.5 * ((x - mean) / sigma)^2)) / error`,
-/// matching the MPFIT convention `(y - f(x)) / y_err`. All arithmetic is done
-/// in `f64`; callers using `f32` convert in and out.
-struct GaussianProblem<'a, F: Float> {
-    x: &'a [F],
-    y: &'a [F],
-    error: &'a [F],
+/// matching the MPFIT convention `(y - f(x)) / y_err`. Inputs are `f32`; all
+/// arithmetic is done in `f64`.
+struct GaussianProblem<'a> {
+    x: &'a [f32],
+    y: &'a [f32],
+    error: &'a [f32],
     params: [MPPar; 3],
     config: MPConfig,
 }
 
-impl<F: Float> MPFitter for GaussianProblem<'_, F> {
+impl MPFitter for GaussianProblem<'_> {
     fn eval(&mut self, params: &[f64], deviates: &mut [f64]) -> MPResult<()> {
         let amp = params[0];
         let mean = params[1];
         let sigma = params[2];
         for (i, deviate) in deviates.iter_mut().enumerate() {
-            let z = (to_f64(&self.x[i]) - mean) / sigma;
+            let z = (f64::from(self.x[i]) - mean) / sigma;
             let model = amp * (-0.5 * z * z).exp();
-            *deviate = (to_f64(&self.y[i]) - model) / to_f64(&self.error[i]);
+            *deviate = (f64::from(self.y[i]) - model) / f64::from(self.error[i]);
         }
         Ok(())
     }
@@ -98,10 +97,10 @@ impl<F: Float> MPFitter for GaussianProblem<'_, F> {
         let mean = params[1];
         let sigma = params[2];
         for (i, deviate) in deviates.iter_mut().enumerate() {
-            let inverse_error = 1.0 / to_f64(&self.error[i]);
-            let z = (to_f64(&self.x[i]) - mean) / sigma;
+            let inverse_error = 1.0 / f64::from(self.error[i]);
+            let z = (f64::from(self.x[i]) - mean) / sigma;
             let expterm = (-0.5 * z * z).exp();
-            *deviate = (to_f64(&self.y[i]) - amp * expterm) * inverse_error;
+            *deviate = (f64::from(self.y[i]) - amp * expterm) * inverse_error;
             if let Some(column) = derivs[0].as_mut() {
                 column[i] = -expterm * inverse_error;
             }
@@ -124,31 +123,29 @@ impl<F: Float> MPFitter for GaussianProblem<'_, F> {
 ///
 /// The fit is delegated to [`rmpfit`], a pure-Rust port of the CMPFIT/MINPACK
 /// `mpfit` routine, so the convergence semantics match the original C
-/// extension. The vendored copy in `third_party/rmpfit` carries one local
-/// patch: a step clamped at a bound lands that parameter exactly on the
-/// bound, where stock MPFIT (C and Rust alike) can stop a few ULP short and
-/// then stall with a spurious "converged" status; see
+/// extension. The vendored copy in `third_party/rmpfit` carries local
+/// patches (a bound-snap fix, the MINPACK `lmpar` clamp, and a reusable
+/// per-thread workspace so a fit allocates nothing); see
 /// `third_party/rmpfit/VENDORED.md`. Parameter errors use the full
 /// three-parameter Hessian, including parameters at their bounds, matching
 /// the C SciPy-style covariance calculation.
-pub fn fit_gaussian_bounded_with_config<F: Float>(
-    x: &[F],
-    y: &[F],
-    error: &[F],
-    initial: [F; 3],
-    bounds: [[F; 2]; 3],
-    config: FitConfig<F>,
-) -> Option<FitOutcome<F>> {
-    let zero = F::zero();
+pub fn fit_gaussian_bounded(
+    x: &[f32],
+    y: &[f32],
+    error: &[f32],
+    initial: [f32; 3],
+    bounds: [[f32; 2]; 3],
+    config: FitConfig,
+) -> Option<FitOutcome> {
     if x.len() != y.len() || x.len() != error.len() || x.len() < 3 {
         return None;
     }
     if !config.xtol.is_finite()
         || !config.ftol.is_finite()
         || !config.gtol.is_finite()
-        || config.xtol <= zero
-        || config.ftol <= zero
-        || config.gtol <= zero
+        || config.xtol <= 0.0
+        || config.ftol <= 0.0
+        || config.gtol <= 0.0
         || config.max_iter == 0
     {
         return None;
@@ -163,28 +160,24 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
     }
     // The solver may evaluate the model anywhere inside the box, and `eval`
     // divides by sigma, so sigma = 0 must be unreachable.
-    if bounds[2][0] <= zero {
+    if bounds[2][0] <= 0.0 {
         return None;
     }
 
     if x.iter().any(|v| !v.is_finite()) || y.iter().any(|v| !v.is_finite()) {
         return None;
     }
-    if error.iter().any(|v| !v.is_finite() || *v <= zero) {
+    if error.iter().any(|v| !v.is_finite() || *v <= 0.0) {
         return None;
     }
 
-    let limits = [
-        [to_f64(&bounds[0][0]), to_f64(&bounds[0][1])],
-        [to_f64(&bounds[1][0]), to_f64(&bounds[1][1])],
-        [to_f64(&bounds[2][0]), to_f64(&bounds[2][1])],
-    ];
+    let limits = bounds.map(|bound| [f64::from(bound[0]), f64::from(bound[1])]);
     // Clamp the start point into the box; rmpfit rejects out-of-bounds starts
     // with MPError::InitBounds.
     let mut params = [
-        clamp_f64(to_f64(&initial[0]), limits[0]),
-        clamp_f64(to_f64(&initial[1]), limits[1]),
-        clamp_f64(to_f64(&initial[2]), limits[2]),
+        clamp_f64(f64::from(initial[0]), limits[0]),
+        clamp_f64(f64::from(initial[1]), limits[1]),
+        clamp_f64(f64::from(initial[2]), limits[2]),
     ];
 
     let mp_par = |limit: [f64; 2]| MPPar {
@@ -196,9 +189,9 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
         ..MPPar::new()
     };
     let mp_config = MPConfig {
-        ftol: to_f64(&config.ftol),
-        xtol: to_f64(&config.xtol),
-        gtol: to_f64(&config.gtol),
+        ftol: f64::from(config.ftol),
+        xtol: f64::from(config.xtol),
+        gtol: f64::from(config.gtol),
         max_iter: config.max_iter,
         ..MPConfig::new()
     };
@@ -211,7 +204,9 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
         config: mp_config,
     };
 
-    let status = problem.mpfit(&mut params).ok()?;
+    let status = WORKSPACE
+        .with_borrow_mut(|workspace| problem.mpfit_with_workspace(&mut params, workspace))
+        .ok()?;
 
     // Chi/Par/Both/Dir are normal convergence; Ftol/Xtol/Gtol mean the solver
     // reached a rounding-limited minimum it cannot improve (still a usable fit).
@@ -235,26 +230,24 @@ pub fn fit_gaussian_bounded_with_config<F: Float>(
     let errors = scipy_style_errors(x, error, params, bestnorm);
 
     Some(FitOutcome {
-        params: [
-            from_f64(params[0])?,
-            from_f64(params[1])?,
-            from_f64(params[2])?,
-        ],
+        params: params.map(|value| value as f32),
         errors,
-        bestnorm: from_f64(bestnorm)?,
+        bestnorm: bestnorm as f32,
+        n_iter: status.n_iter,
+        n_fev: status.n_fev,
     })
 }
 
 /// Return SciPy-style errors from the inverse full Hessian, including any
 /// parameters pegged at their bounds. This mirrors `mp_xerror_scipy` in the C
 /// backend rather than rmpfit's reduced covariance for free parameters only.
-fn scipy_style_errors<F: Float>(x: &[F], error: &[F], params: [f64; 3], bestnorm: f64) -> [F; 3] {
+fn scipy_style_errors(x: &[f32], error: &[f32], params: [f64; 3], bestnorm: f64) -> [f32; 3] {
     let [amplitude, mean, sigma] = params;
     let mut hessian = [[0.0f64; 3]; 3];
 
     for (x_value, error_value) in x.iter().zip(error) {
-        let inverse_error = 1.0 / to_f64(error_value);
-        let z = (to_f64(x_value) - mean) / sigma;
+        let inverse_error = 1.0 / f64::from(*error_value);
+        let z = (f64::from(*x_value) - mean) / sigma;
         let expterm = (-0.5 * z * z).exp();
         let derivatives = [
             -expterm * inverse_error,
@@ -279,7 +272,7 @@ fn scipy_style_errors<F: Float>(x: &[F], error: &[F], params: [f64; 3], bestnorm
     let cofactor_02 = b * e - d * c;
     let determinant = a * cofactors[0] + b * cofactor_01 + c * cofactor_02;
     if !determinant.is_finite() || determinant.abs() < 1.0e-30 {
-        return [F::zero(); 3];
+        return [0.0; 3];
     }
 
     let scale = if x.len() > 3 {
@@ -287,23 +280,14 @@ fn scipy_style_errors<F: Float>(x: &[F], error: &[F], params: [f64; 3], bestnorm
     } else {
         1.0
     };
-    std::array::from_fn(|index| {
-        let variance = cofactors[index] / determinant;
-        let error = if variance > 0.0 {
-            variance.sqrt() * scale
+    cofactors.map(|cofactor| {
+        let variance = cofactor / determinant;
+        if variance > 0.0 {
+            (variance.sqrt() * scale) as f32
         } else {
             0.0
-        };
-        F::from(error).unwrap_or_else(F::zero)
+        }
     })
-}
-
-fn to_f64<F: Float>(value: &F) -> f64 {
-    value.to_f64().unwrap_or(f64::NAN)
-}
-
-fn from_f64<F: Float>(value: f64) -> Option<F> {
-    F::from(value)
 }
 
 fn clamp_f64(value: f64, limit: [f64; 2]) -> f64 {
@@ -360,13 +344,13 @@ mod derivative_tests {
             0.952_372_6,
         ];
         let error = [1.0; 5];
-        let outcome = fit_gaussian_bounded_with_config(
+        let outcome = fit_gaussian_bounded(
             &x,
             &y,
             &error,
             [1.0, 0.0, 69.137_89],
             [[0.9, 1.1], [-81.215_41, 81.215_41], [59.137_894, 200.0]],
-            FitConfig::<f32>::default(),
+            FitConfig::default(),
         )
         .unwrap();
 

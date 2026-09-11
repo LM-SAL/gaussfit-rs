@@ -1,5 +1,15 @@
-use crate::gaussian::{fit_gaussian_bounded_with_config, FitConfig};
-use crate::{FLAG_NO_CONVERGENCE, FLAG_NO_LOCAL_MAX, FLAG_SUCCESS};
+use std::cell::RefCell;
+
+use crate::gaussian::{fit_gaussian_bounded, FitConfig};
+use crate::{
+    FLAG_NO_CONVERGENCE, FLAG_NO_LOCAL_MAX, FLAG_SUCCESS, QUALITY_PEGGED, QUALITY_UNCONSTRAINED,
+    QUALITY_ZERO_ERROR,
+};
+
+thread_local! {
+    // Fit-window buffers (x, y, error), reused across the fits on a thread.
+    static WINDOW: RefCell<[Vec<f32>; 3]> = const { RefCell::new([Vec::new(), Vec::new(), Vec::new()]) };
+}
 
 /// Internal result returned by `fit_single_spectrum_core`.
 #[derive(Clone, Copy, Debug)]
@@ -8,6 +18,12 @@ pub struct FitSingleSpectrumResult {
     pub(crate) fit_results: [f32; 8],
     pub(crate) i_left: i32,
     pub(crate) i_right: i32,
+    /// Quality bitmask for successful fits; zero for failures. The ninth result column.
+    pub(crate) quality: u8,
+    /// Solver iterations and model evaluations for successful fits; -1 otherwise. Exposed with
+    /// `meta=True`.
+    pub(crate) n_iter: i32,
+    pub(crate) n_fev: i32,
 }
 
 fn result_with_flag(flag: f32, i_left: i32, i_right: i32) -> FitSingleSpectrumResult {
@@ -17,14 +33,16 @@ fn result_with_flag(flag: f32, i_left: i32, i_right: i32) -> FitSingleSpectrumRe
         fit_results,
         i_left,
         i_right,
+        quality: 0,
+        n_iter: -1,
+        n_fev: -1,
     }
 }
 
-/// Core fitting logic shared by both the single-spectrum and batch entry points.
+/// Fit one spectrum: find the peak near `guide_velocity`, normalise the window
+/// around it by the peak, run the bounded fit and rescale the amplitude back.
 ///
-/// `spectrum`, `dopp_slit`, and `spec_noise` must all have the same length
-/// (`sg_xpixels`). The function normalises by the detected peak before fitting
-/// and rescales the output parameters back to original units.
+/// `spectrum`, `dopp_slit`, and `spec_noise` must all have the same length.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_single_spectrum_core(
     spectrum: &[f32],
@@ -87,19 +105,14 @@ pub fn fit_single_spectrum_core(
         i_right = (imax + npix + 2).min(sg_xpixels);
     }
 
-    // Common windows stay on the stack; unusually wide fits fall back to heap
-    // buffers rather than reporting a misleading no-peak status.
-    const MAX_STACK_WINDOW: usize = 512;
-    let window_len = i_right - i_left;
     let vel_center = dopp_slit[imax];
     let vel_half_range = dv * npix as f32;
 
-    if window_len <= MAX_STACK_WINDOW {
-        let mut xbuf = [0.0f32; MAX_STACK_WINDOW];
-        let mut ybuf = [0.0f32; MAX_STACK_WINDOW];
-        let mut ebuf = [0.0f32; MAX_STACK_WINDOW];
-        let mut count = 0usize;
-
+    WINDOW.with_borrow_mut(|window| {
+        let [xdata, ydata, edata] = window;
+        xdata.clear();
+        ydata.clear();
+        edata.clear();
         for i in i_left..i_right {
             let x = dopp_slit[i];
             let y = spectrum[i] / max_val;
@@ -107,114 +120,70 @@ pub fn fit_single_spectrum_core(
             // Skip masked / invalid samples: a single non-finite or
             // non-positive noise value would otherwise abort the whole fit.
             if x.is_finite() && y.is_finite() && e.is_finite() && e > 0.0 {
-                xbuf[count] = x;
-                ybuf[count] = y;
-                ebuf[count] = e;
-                count += 1;
+                xdata.push(x);
+                ydata.push(y);
+                edata.push(e);
             }
         }
 
-        return fit_prepared_spectrum_window(
-            &xbuf[..count],
-            &ybuf[..count],
-            &ebuf[..count],
-            max_val,
-            i_left,
-            i_right,
-            vel_center,
-            vel_half_range,
-            width_min,
-            amplitude_rel_min,
-            amplitude_rel_max,
-            width_max,
-            width_guess,
-            config,
-        );
-    }
-
-    let mut xdata = Vec::with_capacity(window_len);
-    let mut ydata = Vec::with_capacity(window_len);
-    let mut edata = Vec::with_capacity(window_len);
-    for i in i_left..i_right {
-        let x = dopp_slit[i];
-        let y = spectrum[i] / max_val;
-        let e = spec_noise[i] / max_val;
-        // Skip masked / invalid samples: a single non-finite or non-positive
-        // noise value would otherwise abort the whole fit.
-        if x.is_finite() && y.is_finite() && e.is_finite() && e > 0.0 {
-            xdata.push(x);
-            ydata.push(y);
-            edata.push(e);
+        // A peak was found, but masking left too few valid samples to constrain a
+        // 3-parameter fit. Reported as FLAG_NO_LOCAL_MAX to match the C extension.
+        if xdata.len() < 3 {
+            return result_with_flag(FLAG_NO_LOCAL_MAX, i_left as i32, i_right as i32);
         }
-    }
 
-    fit_prepared_spectrum_window(
-        &xdata,
-        &ydata,
-        &edata,
-        max_val,
-        i_left,
-        i_right,
-        vel_center,
-        vel_half_range,
-        width_min,
-        amplitude_rel_min,
-        amplitude_rel_max,
-        width_max,
-        width_guess,
-        config,
-    )
-}
+        let p0 = [1.0, vel_center, width_guess];
+        let bounds = [
+            [amplitude_rel_min, amplitude_rel_max],
+            [vel_center - vel_half_range, vel_center + vel_half_range],
+            [width_min, width_max],
+        ];
 
-#[allow(clippy::too_many_arguments)]
-fn fit_prepared_spectrum_window(
-    xdata: &[f32],
-    ydata: &[f32],
-    edata: &[f32],
-    max_val: f32,
-    i_left: usize,
-    i_right: usize,
-    vel_center: f32,
-    vel_half_range: f32,
-    width_min: f32,
-    amplitude_rel_min: f32,
-    amplitude_rel_max: f32,
-    width_max: f32,
-    width_guess: f32,
-    config: FitConfig,
-) -> FitSingleSpectrumResult {
-    // A peak was found, but masking left too few valid samples to constrain a
-    // 3-parameter fit. Reported as FLAG_NO_LOCAL_MAX to match the C extension.
-    if xdata.len() < 3 {
-        return result_with_flag(FLAG_NO_LOCAL_MAX, i_left as i32, i_right as i32);
-    }
+        let Some(outcome) = fit_gaussian_bounded(xdata, ydata, edata, p0, bounds, config) else {
+            return result_with_flag(FLAG_NO_CONVERGENCE, i_left as i32, i_right as i32);
+        };
 
-    let p0 = [1.0, vel_center, width_guess];
-    let bounds = [
-        [amplitude_rel_min, amplitude_rel_max],
-        [vel_center - vel_half_range, vel_center + vel_half_range],
-        [width_min, width_max],
-    ];
+        let dof = (xdata.len() as i32 - 3).max(1) as f32;
+        let fit_results = [
+            outcome.params[0] * max_val,
+            outcome.params[1],
+            outcome.params[2],
+            outcome.errors[0] * max_val,
+            outcome.errors[1],
+            outcome.errors[2],
+            outcome.bestnorm / dof,
+            FLAG_SUCCESS,
+        ];
 
-    let Some(outcome) = fit_gaussian_bounded_with_config(xdata, ydata, edata, p0, bounds, config)
-    else {
-        return result_with_flag(FLAG_NO_CONVERGENCE, i_left as i32, i_right as i32);
-    };
+        // Compare errors with the velocity and width spans. The amplitude bounds
+        // form a detection window; see the quality-bit rationale in docs/design-notes.rst.
+        let mut quality = 0u8;
+        if outcome.errors[1] >= 2.0 * vel_half_range || outcome.errors[2] >= (width_max - width_min)
+        {
+            quality |= QUALITY_UNCONSTRAINED;
+        }
+        if outcome.errors.contains(&0.0) {
+            // This also occurs for exact fits because errors scale with residuals.
+            quality |= QUALITY_ZERO_ERROR;
+        }
+        if outcome
+            .params
+            .iter()
+            .zip(bounds.iter())
+            .any(|(param, bound)| *param == bound[0] || *param == bound[1])
+        {
+            // rmpfit clamps a parameter onto the bound exactly, so equality is the
+            // right test here.
+            quality |= QUALITY_PEGGED;
+        }
 
-    let dof = (xdata.len() as i32 - 3).max(1) as f32;
-    let mut fit_results = [0.0f32; 8];
-    fit_results[0] = outcome.params[0] * max_val;
-    fit_results[1] = outcome.params[1];
-    fit_results[2] = outcome.params[2];
-    fit_results[3] = outcome.errors[0] * max_val;
-    fit_results[4] = outcome.errors[1];
-    fit_results[5] = outcome.errors[2];
-    fit_results[6] = outcome.bestnorm / dof;
-    fit_results[7] = FLAG_SUCCESS;
-
-    FitSingleSpectrumResult {
-        fit_results,
-        i_left: i_left as i32,
-        i_right: i_right as i32,
-    }
+        FitSingleSpectrumResult {
+            fit_results,
+            i_left: i_left as i32,
+            i_right: i_right as i32,
+            quality,
+            n_iter: outcome.n_iter as i32,
+            n_fev: outcome.n_fev as i32,
+        }
+    })
 }
