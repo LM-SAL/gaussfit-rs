@@ -24,8 +24,8 @@ def fit_fixture(ref, *, quality=False):
     """
     Fit every spectrum of a recorded C-reference fixture with the Rust backend.
 
-    With ``quality=True`` the opt-in unconstrained-fit flags are returned as a third value, so
-    figure tests can show them alongside the parameters.
+    With ``quality=True`` the calls use the opt-in ninth column, so ``fits[:, 8]`` holds the
+    unconstrained-fit indicator for every row.
     """
     params = {key: cast(ref[key]) for key, cast in FIT_KEYS.items()}
     return fit_spectra_batch_guided(

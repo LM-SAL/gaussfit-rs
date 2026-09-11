@@ -70,8 +70,9 @@ def _panel_text(row, fits, ref_fits, unconstrained):
     e_amp, e_vel, e_sigma = fits[row, 3:6]
     marker = " UNC" if unconstrained[row] else ""
     return (
-        f"#{row} A={amp:.3g}±{e_amp:.2g} V={vel:.3g}±{e_vel:.2g} S={sigma:.4g}±{e_sigma:.2g}\n"
-        f"χ²={fits[row, 6]:.3g} flag R/C {fits[row, 7]:.0f}/{ref_fits[row, 7]:.0f}{marker}"
+        f"#{row} A={amp:.3g}+/-{e_amp:.2g} V={vel:.3g}+/-{e_vel:.2g}\n"
+        f"    S={sigma:.4g}+/-{e_sigma:.2g}\n"
+        f"chi2={fits[row, 6]:.3g} flag R/C {fits[row, 7]:.0f}/{ref_fits[row, 7]:.0f}{marker}"
     )
 
 
@@ -82,7 +83,8 @@ def test_fit_gallery(fixture, family):
     Up to twelve fits of one family: data, fit window, Rust against the C reference, parameters.
     """
     ref = np.load(fixture)
-    fits, indices, unconstrained = fit_fixture(ref, quality=True)
+    fits, indices = fit_fixture(ref, quality=True)
+    unconstrained = fits[:, 8] != 0
     dopp, velocity_range = ref["dopp"], float(ref["velocity_range"])
     rows = np.flatnonzero(ref["labels"] == family)[:PANELS]
     fig, axes = plt.subplots(3, 4, figsize=(16, 9), constrained_layout=True)
@@ -116,7 +118,8 @@ def test_family_overview(fixture):
     One representative spectrum per family, so the whole test range is inspectable at a glance.
     """
     ref = np.load(fixture)
-    fits, indices, unconstrained = fit_fixture(ref, quality=True)
+    fits, indices = fit_fixture(ref, quality=True)
+    unconstrained = fits[:, 8] != 0
     dopp, velocity_range = ref["dopp"], float(ref["velocity_range"])
     families = np.unique(ref["labels"]).tolist()
     ncols = 4
@@ -157,7 +160,8 @@ def test_quality_per_family(fixture):
     How well each family is constrained: success rate, unconstrained share, velocity error, chi2.
     """
     ref = np.load(fixture)
-    fits, _, unconstrained = fit_fixture(ref, quality=True)
+    fits, _ = fit_fixture(ref, quality=True)
+    unconstrained = fits[:, 8] != 0
     families = np.unique(ref["labels"]).tolist()
     solved = fits[:, 7] == FLAG_SUCCESS
     stats = {
@@ -188,11 +192,11 @@ def test_quality_per_family(fixture):
             label=family,
         )
     axes[2].set_xlabel("velocity error [km/s]")
-    axes[2].set_ylabel("reduced chi²")
+    axes[2].set_ylabel("reduced chi2")
     axes[2].set_xscale("log")
     axes[2].set_yscale("log")
     axes[2].legend(fontsize=6, ncols=2)
-    axes[2].set_title("solved rows: error against chi²")
+    axes[2].set_title("solved rows: error against chi2")
     fig.suptitle(f"{fixture.stem}: fit quality per family")
     return fig
 
@@ -277,8 +281,8 @@ def test_low_level_gaussian_fits():
         if fit[7] == FLAG_SUCCESS:
             ax.plot(x, _gaussian(x, fit), color="C0", lw=1.6, label="fit")
         ax.set_title(
-            f"{name}: A={fit[0]:.3g}±{fit[3]:.2g} V={fit[1]:.3g}±{fit[4]:.2g} "
-            f"S={fit[2]:.4g}±{fit[5]:.2g} χ²={fit[6]:.3g} flag {fit[7]:.0f}",
+            f"{name}: A={fit[0]:.3g}+/-{fit[3]:.2g} V={fit[1]:.3g}+/-{fit[4]:.2g} "
+            f"S={fit[2]:.4g}+/-{fit[5]:.2g} chi2={fit[6]:.3g} flag {fit[7]:.0f}",
             fontsize=8,
         )
         ax.set_xlabel("x")

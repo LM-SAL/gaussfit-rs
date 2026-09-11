@@ -289,56 +289,66 @@ def test_quality_flag_is_opt_in_and_reports_unconstrained_successes():
     plain = fit_single_spectrum(spectrum=spec, dopp_slit=v, spec_noise=err, **COMMON_KW)
     assert len(plain) == 2  # opt-in: the default arity is unchanged
 
-    fits, _, flag = fit_single_spectrum(
+    fits = fit_single_spectrum(
         spectrum=spec, dopp_slit=v, spec_noise=err, quality=True, **COMMON_KW
-    )
+    )[0]
+    assert fits.shape == (9,)
     assert fits[7] == FLAG_SUCCESS
-    assert flag == 0  # a real line constrains its parameters
+    assert fits[8] == 0  # a real line constrains its parameters
 
     # A faint line over structured noise fits "successfully" but is not constrained by the data:
-    # its amplitude error exceeds the interval the parameter was bounded to.
-    saw = 3.0 * ((np.arange(v.size) % 5) - 2.0)
-    faint = (0.5 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2) + saw).astype(np.float32)
+    # its velocity and width errors exceed the intervals those parameters were bounded to.
+    checker = np.where(np.arange(v.size) % 2 == 0, 3.0, -3.0)
+    faint = (0.5 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2) + checker).astype(np.float32)
     faint_err = np.full(v.size, 3.0, dtype=np.float32)
-    fits_u, _, flag_u = fit_single_spectrum(
+    fits_u = fit_single_spectrum(
         spectrum=faint, dopp_slit=v, spec_noise=faint_err, quality=True, **COMMON_KW
-    )
+    )[0]
     assert fits_u[7] == FLAG_SUCCESS
-    assert flag_u == 1
+    assert fits_u[4] >= 2.0 * COMMON_KW["dv"] * COMMON_KW["npix"]
+    assert fits_u[8] == 1
 
     # Failed fits are reported by the result flag, not the indicator.
     flat = np.full(v.size, -1.0, dtype=np.float32)
-    fits_f, _, flag_f = fit_single_spectrum(
+    fits_f = fit_single_spectrum(
         spectrum=flat, dopp_slit=v, spec_noise=err, quality=True, **COMMON_KW
-    )
+    )[0]
     assert fits_f[7] == FLAG_NO_LOCAL_MAX
-    assert flag_f == 0
+    assert fits_f[8] == 0  # failed fits carry no indicator
 
 
 def test_batch_quality_flags_match_the_documented_criterion():
     """
-    The batch indicator equals the documented velocity/width span test on the returned errors.
+    The batch indicator (ninth column) equals the documented span test on the returned errors.
     """
     v, spec, err = _make_spectrum(amp=1.0, noise=0.05)
     checker = np.where(np.arange(v.size) % 2 == 0, 3.0, -3.0)
     noisy = (0.5 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2) + checker).astype(np.float32)
-    spectra = np.stack([spec, noisy])
-    noises = np.stack([err, np.full(v.size, 3.0, dtype=np.float32)])
+    # A noiseless line far too faint to constrain: its determinant falls under the guard, so all
+    # three errors come back exactly zero and the fit is unconstrained by definition.
+    tiny = (1.0e-6 * np.exp(-0.5 * (v / SIGMA_TRUE) ** 2)).astype(np.float32)
+    spectra = np.stack([spec, noisy, tiny])
+    noises = np.stack([err, np.full(v.size, 3.0, dtype=np.float32), err])
 
     plain = fit_spectra_batch(spectra=spectra, dopp_slit=v, spec_noise=noises, **COMMON_KW)
     assert len(plain) == 2
 
-    fits, indices, flags = fit_spectra_batch(
+    fits, indices = fit_spectra_batch(
         spectra=spectra, dopp_slit=v, spec_noise=noises, quality=True, **COMMON_KW
     )
-    assert flags.dtype == np.uint8
-    assert flags.shape == (2,)
-    assert indices.shape == (2, 2)
+    flags = fits[:, 8]
+    assert fits.shape[1] == 9
+    assert flags.dtype == np.float32
+    assert indices.shape == (3, 2)
     assert fits[0, 7] == FLAG_SUCCESS
     assert flags[0] == 0
     assert flags[1] == 1
+    assert np.array_equal(fits[2, 3:6], np.zeros(3, dtype=np.float32))  # the guard zeroed them
+    assert flags[2] == 1
 
     span_velocity = 2.0 * COMMON_KW["dv"] * COMMON_KW["npix"]
     span_width = COMMON_KW["width_max"] - COMMON_KW["width_min"]
-    derived = ((fits[:, 4] >= span_velocity) | (fits[:, 5] >= span_width)).astype(np.uint8)
+    derived = (
+        (fits[:, 4] >= span_velocity) | (fits[:, 5] >= span_width) | (fits[:, 3:6] == 0).any(axis=1)
+    ).astype(np.float32)
     assert np.array_equal(flags, derived)

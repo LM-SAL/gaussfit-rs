@@ -220,10 +220,18 @@ fn fit_prepared_spectrum_window(
 
     // Opt-in quality flag (see "Opt-In Unconstrained-Fit Indicator" in
     // docs/design-notes.rst): a parameter whose formal error is not smaller than
-    // the interval it was bounded to is not constrained by the data. The
-    // amplitude error is in normalised units here, matching the amplitude bounds.
+    // the interval it was bounded to is not constrained by the data. Only the
+    // velocity and width intervals qualify as such a scale: the amplitude window
+    // is a detection window (+/-10 % of the peak in the pipeline configuration),
+    // so comparing against its width would flag ordinary low-SNR fits - measured
+    // on a real MUSE run it fired on 40 % of the solved spaxels, against 5.9 %
+    // for the velocity interval. An exactly zero error is flagged as well: it is
+    // physically impossible (the near-singular guard zeroes all three errors on
+    // near-zero-flux windows, where C's fallback still returns a finite number),
+    // and the span comparisons cannot see it.
+    let zero_error = outcome.errors.contains(&0.0);
     let unconstrained = u8::from(
-        outcome.errors[0] >= (amplitude_rel_max - amplitude_rel_min)
+        zero_error
             || outcome.errors[1] >= 2.0 * vel_half_range
             || outcome.errors[2] >= (width_max - width_min),
     );

@@ -188,15 +188,27 @@ Still worth doing: report the deviation upstream (it exists in released rmpfit).
 8-9 % of pixels (10,876 in `mom_gt_noise`, 11,382 in `mom_gfat`, 7,796 in `mom_inv`) carry a
 median `error_velocity` of 200-244 km/s while **both** backends return FLAG_SUCCESS and the
 pipeline propagates them into the moments and area statistics (amplitude there 2.6-3.6 against
-17.8-18.9 overall). `quality=True` on the three spectrum entry points now returns an extra
-unconstrained-fit indicator: 1 when a parameter's formal 1σ error is not smaller than the interval
-that parameter was fitted in (amplitude span in peak-normalised units, `2*dv*npix` for velocity,
-`width_max - width_min` for linewidth), 0 otherwise and for failed fits. Default off, so the
-8-column contract and the parity corpus are untouched. Documented in `docs/userguide.rst` and
-"Opt-In Unconstrained-Fit Indicator" in `docs/design-notes.rst`; pinned by
+17.8-18.9 overall). `quality=True` on the three spectrum entry points now appends a ninth column to
+the result array (`fit_results[8]`, `fit_results[:, 8]` for a batch): 1 when the fit succeeded but
+the data do not constrain it, 0 otherwise and for failed fits. Flagged when the velocity error is
+not smaller than `2*dv*npix`, or the linewidth error is not smaller than `width_max - width_min`,
+or any of the three errors is exactly 0 (the near-singular guard's output, impossible in a real
+fit).
+
+The amplitude term was implemented first and dropped: the pipeline's amplitude bounds are a +/-10 %
+detection window, so it fires on ordinary low-SNR fits — on the summed cube of a real run it raises
+the rate from 11.2 % to 45.2 % of the 3,459 solved spaxels (1,384 of them against 205 for velocity
+alone). Measured rate with the shipped criterion: 11.2 % of the real run's solved spaxels, 7.4 % of
+the 336 solved `muse` corpus rows, 3.0 % of the 367 `wide` rows. Bound-pinned parameters with small
+errors are **not** caught, deliberately: including them would flag ~30 % of `muse` rows (amplitude
+saturation, 79 of 336, and 15 of 15 `broad` rows). Default off, so the 8-column contract and the
+parity corpus are untouched. Documented in `docs/userguide.rst` and "Opt-In Unconstrained-Fit
+Indicator" in `docs/design-notes.rst` (criterion, measurements, limitations); pinned by
 `src/tests/spectrum.rs::quality_flag_separates_constrained_and_unconstrained_fits`,
 `python/gaussfit_rs/tests/test_fit_single_spectrum.py` and the figure suite
 (`test_quality_per_family`, `UNC` markers in the galleries).
+Example figure of a flagged fit, both backends side by side: `/tmp/unconstrained_example.py`
+(corpus row where C reports zero error and Rust a 1e6 km/s one, plus the symmetric-line sign flip).
 Follow-up (muse side): decide whether `sdc_benchmark` should consume the flag.
 
 ## 4. The carlos_dev C++ prototype: faster per row, still not worth adopting
