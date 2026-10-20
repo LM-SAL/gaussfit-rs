@@ -193,6 +193,9 @@ pub fn fit_gaussian_bounded(
         xtol: f64::from(config.xtol),
         gtol: f64::from(config.gtol),
         max_iter: config.max_iter,
+        // Errors come from scipy_style_errors below, so rmpfit's own
+        // covariance pass is skipped.
+        no_covar: true,
         ..MPConfig::new()
     };
 
