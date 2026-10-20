@@ -45,8 +45,9 @@ fn bench_fit_window() {
     for npix in npix_list {
         let window = 2 * npix + 1;
         let pixels = 60usize.max(4 * window as usize + 1);
+        // 12 km/s pixels centred on zero, as benchmarks/throughput.py builds them.
         let velocity: Vec<f32> = (0..pixels)
-            .map(|i| -300.0 + 600.0 * i as f32 / (pixels - 1) as f32)
+            .map(|i| (i as f32 - (pixels - 1) as f32 / 2.0) * 12.0)
             .collect();
         let mut rng = Lcg(123);
         let spectra: Vec<Vec<f32>> = (0..n_spectra)
