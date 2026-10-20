@@ -1,3 +1,6 @@
+# pre-commit.ci has no Rust toolchain: the cargo hooks run in the CI rust job instead.
+ci:
+  skip: [cargo-fmt, cargo-clippy, cargo-test]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
