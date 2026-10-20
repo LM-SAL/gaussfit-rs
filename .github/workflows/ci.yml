@@ -47,7 +47,7 @@ jobs:
     # Every supported Python once and every platform once: the C-parity job needs Linux for
     # the pinned C extension, the newest Python goes on Linux too, the others on macOS and Windows.
     needs: [rust]
-    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@22ddf09dfabb443adddfb9f861b7d41a787d6b1a # v3.0.3
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
     with:
       submodules: false
       toxdeps: tox-pypi-filter
