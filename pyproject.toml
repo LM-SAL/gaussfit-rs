@@ -6,7 +6,7 @@ build-backend = "maturin"
 
 [project]
 name = "gaussfit-rs"
-version = "2.0.0"
+dynamic = ["version"]  # taken from Cargo.toml by maturin
 description = "Rust backend for MUSE fast Gaussian fitting"
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -14,7 +14,7 @@ license-files = ["LICENSE"]
 authors = [
   { name = "Nabil Freij", email = "nabil.freij@gmail.com" },
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
   "numpy>=2.3.0",
 ]
