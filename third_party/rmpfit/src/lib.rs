@@ -244,6 +244,12 @@ pub struct MPConfig {
     /// true = perform check;
     /// false = do not perform check (Default: false)
     pub no_finite_check: bool,
+    /// Skip the covariance calculation at the end of the fit?
+    /// true = skip it, leaving [`MPStatus::covar`] and [`MPStatus::xerror`]
+    /// empty and the workspace `fjac` unspecified;
+    /// false = compute it (Default: false).
+    /// gaussfit-rs local patch (see VENDORED.md).
+    pub no_covar: bool,
 }
 
 impl MPConfig {
@@ -259,6 +265,7 @@ impl MPConfig {
             max_fev: MPMaxFev::Default,
             do_user_scale: false,
             no_finite_check: false,
+            no_covar: false,
         }
     }
 }
@@ -381,7 +388,9 @@ pub trait MPFitter {
     /// * `derivs`   - per-parameter derivative columns, length = `npar`.
     ///   - `derivs[i]` is `Some(col)` when parameter `i` needs an analytical
     ///     derivative; `col` has length `m` (number of residuals). Fill
-    ///     `col[k]` with `ddeviates[k] / dparams[i]`.
+    ///     every `col[k]` with `ddeviates[k] / dparams[i]`: the column is not
+    ///     cleared between evaluations (gaussfit-rs local patch, see
+    ///     VENDORED.md), so an element left unwritten keeps its previous value.
     ///   - `derivs[i]` is `None` for parameters using numerical derivatives.
     ///
     /// The method must also fill `deviates` (the residual vector), exactly as
@@ -407,7 +416,12 @@ pub trait MPFitter {
         // workspace, then fill in the residuals, covariance and errors that
         // upstream's terminate() built (see MPWorkspace for where they live).
         let mut ws = MPWorkspace::default();
+        let no_covar = self.config().no_covar;
         let mut status = self.mpfit_with_workspace(xall, &mut ws)?;
+        if no_covar {
+            status.resid = ws.fvec;
+            return Ok(status);
+        }
         let (m, npar, nfree) = (status.n_func, status.n_par, status.n_free);
         status.covar = vec![0.; npar * npar];
         for j in 0..nfree {
@@ -769,7 +783,9 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
     //
     fn fdjac2(&mut self) -> MPResult<()> {
         let eps = self.cfg.epsfcn.max(f64::EPSILON).sqrt();
-        self.fjac.fill(0.);
+        // gaussfit-rs local patch (see VENDORED.md): upstream zeroed fjac
+        // here; every element is written below (an analytical column is
+        // copied in, a numerical one is filled by the difference loop).
         let has_analytical = self
             .dside
             .iter()
@@ -778,11 +794,8 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
         if has_analytical {
             let m = self.m;
             // gaussfit-rs local patch (see VENDORED.md): the columns were
-            // allocated in init_lm; zero them so the user sees the same fresh
-            // buffers a per-call allocation gave, without the heap round trip.
-            for col in self.derivs.iter_mut().flatten() {
-                col.fill(0.0);
-            }
+            // allocated in init_lm and are handed over as they are, holding
+            // the previous evaluation; the user fills every element.
             self.f.jacobian(&self.xnew, &mut self.wa4, &mut self.derivs)?;
             self.nfev += 1;
             for j in 0..self.nfree {
@@ -1238,9 +1251,13 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
     /// Check for overflow.  This should be a cheap test here since FJAC
     /// has been reduced to a (small) square matrix, and the test is O(N^2).
     fn check_is_finite(&self) -> bool {
+        // gaussfit-rs local patch (see VENDORED.md): test the nfree x nfree
+        // block only, as CMPFIT does (upstream walked all m x nfree). A
+        // non-finite Householder component makes that column's norm, and so
+        // its diagonal element of R, non-finite, so nothing is missed.
         if !self.cfg.no_finite_check {
-            for val in self.fjac.iter() {
-                if !val.is_finite() {
+            for col in self.fjac.chunks_exact(self.m).take(self.nfree) {
+                if col[..self.nfree].iter().any(|val| !val.is_finite()) {
                     return false;
                 }
             }
@@ -1289,8 +1306,11 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
         /* Compute the covariance matrix; it stays in fjac (see MPWorkspace).
          * gaussfit-rs local patch (see VENDORED.md): the per-parameter copies
          * upstream built here are made by MPFitter::mpfit instead, so this
-         * path allocates nothing. */
-        self = self.covar();
+         * path allocates nothing, and a caller that derives its own errors
+         * can skip the calculation with MPConfig::no_covar. */
+        if !self.cfg.no_covar {
+            self = self.covar();
+        }
         let best_norm = self.fnorm.max(self.fnorm1);
         Ok(MPStatus {
             success: self.info,
@@ -2168,51 +2188,77 @@ trait ENorm {
 }
 
 impl ENorm for [f64] {
+    #[inline]
     fn enorm(&self) -> f64 {
-        let mut s1 = 0.;
-        let mut s2 = 0.;
-        let mut s3 = 0.;
-        let mut x1max = 0.;
-        let mut x3max = 0.;
+        // gaussfit-rs local patch (see VENDORED.md): when every component is
+        // zero or of intermediate magnitude, the three-sum algorithm in
+        // enorm_scaled reduces exactly to the square root of the plain
+        // sequential sum of squares (s1 and s3 stay zero, so its final
+        // expression is s2 * (1 + 0) before the root), so take that path
+        // branch-free and fall back only when a component is tiny or huge.
         let agiant = MP_RGIANT / self.len() as f64;
+        let mut s2 = 0.;
+        let mut plain = true;
         for val in self {
             let xabs = val.abs();
-            if xabs > MP_RDWARF && xabs < agiant {
-                // sum for intermediate components.
-                s2 += xabs * xabs;
-            } else if xabs > MP_RDWARF {
-                // sum for large components.
-                if xabs > x1max {
-                    let temp = x1max / xabs;
-                    s1 = 1.0 + s1 * temp * temp;
-                    x1max = xabs;
-                } else {
-                    let temp = xabs / x1max;
-                    s1 += temp * temp;
-                }
-            } else if xabs > x3max {
-                // sum for small components.
-                let temp = x3max / xabs;
-                s3 = 1.0 + s3 * temp * temp;
-                x3max = xabs;
-            } else if xabs != 0.0 {
-                let temp = xabs / x3max;
-                s3 += temp * temp;
-            }
+            plain &= ((xabs > MP_RDWARF) & (xabs < agiant)) | (xabs == 0.);
+            s2 += xabs * xabs;
         }
-        // calculation of norm.
-        if s1 != 0.0 {
-            x1max * (s1 + (s2 / x1max) / x1max).sqrt()
-        } else if s2 != 0.0 {
-            if s2 >= x3max {
-                s2 * (1.0 + (x3max / s2) * (x3max * s3))
-            } else {
-                x3max * ((s2 / x3max) + (x3max * s3))
-            }
-            .sqrt()
+        if plain {
+            s2.sqrt()
         } else {
-            x3max * s3.sqrt()
+            enorm_scaled(self)
         }
+    }
+}
+
+/// The three-sum MINPACK enorm, kept out of line as the rare path of
+/// [`ENorm::enorm`] (gaussfit-rs local patch, see VENDORED.md).
+#[inline(never)]
+fn enorm_scaled(x: &[f64]) -> f64 {
+    let mut s1 = 0.;
+    let mut s2 = 0.;
+    let mut s3 = 0.;
+    let mut x1max = 0.;
+    let mut x3max = 0.;
+    let agiant = MP_RGIANT / x.len() as f64;
+    for val in x {
+        let xabs = val.abs();
+        if xabs > MP_RDWARF && xabs < agiant {
+            // sum for intermediate components.
+            s2 += xabs * xabs;
+        } else if xabs > MP_RDWARF {
+            // sum for large components.
+            if xabs > x1max {
+                let temp = x1max / xabs;
+                s1 = 1.0 + s1 * temp * temp;
+                x1max = xabs;
+            } else {
+                let temp = xabs / x1max;
+                s1 += temp * temp;
+            }
+        } else if xabs > x3max {
+            // sum for small components.
+            let temp = x3max / xabs;
+            s3 = 1.0 + s3 * temp * temp;
+            x3max = xabs;
+        } else if xabs != 0.0 {
+            let temp = xabs / x3max;
+            s3 += temp * temp;
+        }
+    }
+    // calculation of norm.
+    if s1 != 0.0 {
+        x1max * (s1 + (s2 / x1max) / x1max).sqrt()
+    } else if s2 != 0.0 {
+        if s2 >= x3max {
+            s2 * (1.0 + (x3max / s2) * (x3max * s3))
+        } else {
+            x3max * ((s2 / x3max) + (x3max * s3))
+        }
+        .sqrt()
+    } else {
+        x3max * s3.sqrt()
     }
 }
 
@@ -2269,6 +2315,59 @@ impl fmt::Debug for MPSuccess {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn enorm_fast_path_is_bit_identical_to_the_scaled_sum() {
+        use super::{ENorm, MP_RDWARF, MP_RGIANT};
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let specials = [
+            0.0,
+            -0.0,
+            1.0,
+            -3.5,
+            MP_RDWARF,
+            MP_RDWARF * 0.5,
+            MP_RDWARF * 2.0,
+            MP_RGIANT,
+            MP_RGIANT * 0.5,
+            MP_RGIANT / 3.0,
+            1e-200,
+            1e200,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+        for len in 0..8 {
+            for _ in 0..2000 {
+                let v: Vec<f64> = (0..len)
+                    .map(|_| {
+                        let r = next();
+                        if r % 4 == 0 {
+                            specials[(r >> 8) as usize % specials.len()]
+                        } else {
+                            let mantissa = (r >> 11) as f64 / (1u64 << 53) as f64;
+                            let exponent = ((r >> 3) % 80) as i32 - 40;
+                            (2.0 * mantissa - 1.0) * 10f64.powi(exponent)
+                        }
+                    })
+                    .collect();
+                let fast = v.enorm();
+                let slow = super::enorm_scaled(&v);
+                assert!(
+                    fast.to_bits() == slow.to_bits() || (fast.is_nan() && slow.is_nan()),
+                    "{v:?}: {fast:e} vs {slow:e}"
+                );
+            }
+        }
+    }
+
     use crate::{MPConfig, MPError, MPFitter, MPMaxFev, MPPar, MPResult, MPStatus, MPSuccess};
     use std::f64::consts::{LN_2, PI};
 

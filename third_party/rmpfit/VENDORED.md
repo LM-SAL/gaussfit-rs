@@ -1,8 +1,8 @@
 # Vendored: rmpfit
 
 This directory is a copy of the third-party crate [`rmpfit`](https://crates.io/crates/rmpfit),
-a pure-Rust port of the CMPFIT/MINPACK Levenberg-Marquardt solver, carrying three local patches
-(`bound-snap`, `lmpar-clamp`, `workspace`). It backs the Gaussian fit in `src/gaussian.rs`.
+a pure-Rust port of the CMPFIT/MINPACK Levenberg-Marquardt solver, carrying four local patches
+(`bound-snap`, `lmpar-clamp`, `workspace`, `perf`). It backs the Gaussian fit in `src/gaussian.rs`.
 
 | | |
 |---|---|
@@ -14,8 +14,8 @@ a pure-Rust port of the CMPFIT/MINPACK Levenberg-Marquardt solver, carrying thre
 | crates.io tarball sha256 | `e3e8006f8d69fcd1b9cbbf7b74999549dfe44b504b8c4f80727ae40a2b856528` (from the previous `Cargo.lock`) |
 | License | MIT (see `LICENSE`) |
 | Upstream `src/lib.rs` sha256 | `db6a83434cd18369e674cf26226c93a09a7cf5ba157bdd0efe32c8912490f431` |
-| Vendored `src/lib.rs` sha256 | `e2481c7c667c64ecbb57b05a61539af99b7f10981eca9590d3ac35089778509c` |
-| Vendored on | 2026-09-10; `lmpar-clamp.patch` and `workspace.patch` added 2026-09-11 |
+| Vendored `src/lib.rs` sha256 | `81a2c9b3bbff57e26d5ac8cdaced3734bbbb8efbcd1214deb92c494fc2b74d4e` |
+| Vendored on | 2026-09-10; `lmpar-clamp.patch` and `workspace.patch` added 2026-09-11; `perf.patch` added 2026-10-20 |
 
 `Cargo.toml` and `README.md` are the published files, unchanged. The registry artifacts
 (`Cargo.toml.orig`, `Cargo.lock`, `.cargo-ok`, `.cargo_vcs_info.json`, `.gitignore`) are not
@@ -23,7 +23,7 @@ copied; `Cargo.toml.orig` in particular breaks `maturin sdist`.
 
 ## Why vendored, and why patched
 
-`src/lib.rs` is the upstream file plus three patches. `bound-snap.patch` is a single hunk in
+`src/lib.rs` is the upstream file plus four patches. `bound-snap.patch` is a single hunk in
 `MPFit::iterate`: MPFIT scales a step that would cross a parameter bound so it stops at the bound,
 then snaps coordinates within one ULP of a limit onto it. `x + alpha * step` can round a couple of
 ULP past the limit; the snap misses it, the parameter never counts as pegged, the next step's
@@ -55,11 +55,29 @@ Every value written to `fjac` is the same, in the same order: the parity corpus 
 in a `thread_local!`, so after the first fit on a thread a fit makes no heap allocation. Numbers
 under "Performance" in `docs/design-notes.rst`.
 
+`perf.patch` is a second performance patch, again with no numerical effect: the Rust outputs over
+the same 92-corpus parity set (and two 20,000-spectrum benchmark batches) are bit-identical before
+and after. It makes four changes. The MINPACK `enorm` takes a branch-free fast path, the plain
+sequential sum of squares, which is exactly what its three-sum algorithm reduces to when no
+component is tiny or huge; the original is kept as `enorm_scaled` for the rest, and
+`tests::enorm_fast_path_is_bit_identical_to_the_scaled_sum` pins the equivalence
+(`cargo test --manifest-path third_party/rmpfit/Cargo.toml enorm_fast_path`). `fdjac2` no longer
+zeroes `fjac` and the analytical derivative columns, since every element is overwritten before it
+is read (a user `jacobian` must therefore fill every element of each column). The finite check
+after the QR factorisation covers the `nfree x nfree` block as CMPFIT does, where upstream walked
+all `m x nfree`; a non-finite Householder component makes that column's norm, and so its diagonal
+element of R, non-finite, so nothing is missed. And `MPConfig::no_covar` lets a caller that
+derives its own errors (as `src/gaussian.rs` does) skip the covariance pass at the end of the
+fit. Measured together, these cut the cycles per fit by 6 % at a 5-sample window and 3 % at 21
+samples with the instruction count unchanged; numbers and the two rejected variants under
+"Performance" in `docs/design-notes.rst`.
+
 Every local change is marked `gaussfit-rs local patch` at the patch site. Nothing else in the
 file differs from upstream; check with
 
 ```bash
 cp -r third_party/rmpfit /tmp/rmpfit-check
+patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/perf.patch
 patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/workspace.patch
 patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/lmpar-clamp.patch
 patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/bound-snap.patch
@@ -90,7 +108,7 @@ first publish year) is unverified because the upstream host is behind an anti-bo
 1. `cargo fetch` the new version or download the tarball from crates.io; copy `Cargo.toml`,
    `README.md` and `src/lib.rs` here (not the registry artifacts listed above).
 2. Apply the patches in order: `patch -p1 -d third_party/rmpfit < third_party/rmpfit/<name>.patch`
-   for `bound-snap`, `lmpar-clamp`, then `workspace`. If upstream has fixed the snap, drop that
+   for `bound-snap`, `lmpar-clamp`, `workspace`, then `perf`. If upstream has fixed the snap, drop that
    patch instead and delete the patch-site comments, its paragraph above and the design-notes
    section; the regression tests decide:
    `src/tests/gaussian.rs::bound_pinned_window_matches_c_reference` and
@@ -101,7 +119,8 @@ first publish year) is unverified because the upstream host is behind an anti-bo
    base — not all against upstream. `bound-snap.patch` is
    `diff -u --label a/src/lib.rs --label b/src/lib.rs <upstream lib.rs> <upstream + snap>`,
    `lmpar-clamp.patch` is the same command from that intermediate file to the next
-   (`+ lmpar`), and `workspace.patch` from that one to `src/lib.rs`. Regenerating them from
+   (`+ lmpar`), `workspace.patch` from that one to the next (`+ workspace`), and `perf.patch`
+   from that one to `src/lib.rs`. Regenerating them from
    upstream in one go would fold earlier hunks into later patches and break the reverse check
    above.
 4. `cargo test`, then the live parity test with the C reference installed
