@@ -13,6 +13,11 @@ import argparse
 import os
 from time import perf_counter
 
+# NumPy's OpenBLAS workers busy-wait for ~60 ms after a BLAS call, on the SMT siblings of the
+# fitting threads; a short batch started inside that window runs up to 1.75x slower. Pin them.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import numpy as np
 
 from gaussfit_rs import FLAG_SUCCESS, fit_spectra_batch
@@ -38,7 +43,7 @@ def measure(spectra: int, pixels: int, npix: int, repeat: int) -> float:
             spectra=data,
             dopp_slit=velocity,
             spec_noise=noise,
-            guide_velocity=0.0,
+            guide_velocities=0.0,
             velocity_range=200.0,
             npix=npix,
             npix_slack=2,
