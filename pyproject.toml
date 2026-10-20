@@ -14,7 +14,7 @@ license-files = ["LICENSE"]
 authors = [
   { name = "Nabil Freij", email = "nabil.freij@gmail.com" },
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
   "numpy>=2.3.0",
 ]
