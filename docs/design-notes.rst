@@ -317,13 +317,18 @@ velocity/width/zero rule recomputed from the returned columns), plus the figure 
 Performance
 -----------
 
-- **Status:** measured 2026-09-11; per-fit allocation removed, the rest attributed.
+- **Status:** measured 2026-09-11; per-fit allocation removed, the rest attributed. Second pass
+  2026-10-20: solver bookkeeping trimmed, the remainder mapped by instruction.
 - **Owner:** Nabil Freij.
 - **Code:** ``third_party/rmpfit/workspace.patch`` (``MPWorkspace``, ``mpfit_with_workspace``),
-  the per-thread workspace in ``src/gaussian.rs``, the per-thread window buffers in
-  ``src/spectrum.rs``.
+  ``third_party/rmpfit/perf.patch`` (``enorm`` fast path, ``fdjac2`` fills, finite check,
+  ``MPConfig::no_covar``), the per-thread workspace in ``src/gaussian.rs``, the per-thread window
+  buffers in ``src/spectrum.rs``.
 - **Harness:** ``benchmarks/throughput.py`` (``--npix`` sweeps the window; the fitted intercept
-  is the per-fit overhead, the slope the per-sample arithmetic).
+  is the per-fit overhead, the slope the per-sample arithmetic) for the public batch path, and
+  ``src/tests/bench.rs`` (``taskset -c N cargo test --release bench_fit_window -- --ignored
+  --nocapture``) for the fit alone, which under ``perf stat -e cycles:u,instructions:u`` with
+  ``BENCH_ROUNDS=0`` subtracted gives counts per fit that do not drift between runs.
 
 What A Fit Costs
 ~~~~~~~~~~~~~~~~
@@ -334,6 +339,71 @@ Single-threaded, a fit costs about 1.4 us fixed plus 0.08 us per sample, so at t
 (the intercept went from 1.78 to 1.43 us on the synthetic sweep, 0.2-0.35 us per row on real
 MUSE rows) with bit-identical output over the parity corpus. glibc's tcache makes an
 allocation cost about 10 ns, so the gain is bounded; a faster allocator does not help.
+
+Second Pass: Where The Instructions Go
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Measured 2026-10-20 on a Ryzen 9 9950X with the pinned harness above, median of three
+interleaved runs, data generation subtracted. A fit is throughput-bound, not latency-bound:
+
+.. list-table::
+   :header-rows: 1
+
+   * - window (samples)
+     - instructions per fit
+     - cycles per fit
+     - after ``perf.patch``
+   * - 5
+     - 41,300
+     - 11,100 (IPC 3.7)
+     - cycles -6.3 %, instructions -0.4 %
+   * - 9
+     - 48,100
+     - 11,900
+     - cycles -5.1 %, instructions +0.1 %
+   * - 21
+     - 77,000
+     - 17,200
+     - cycles -2.8 %, instructions +0.7 %
+
+Callgrind on the 5-sample window attributes the 41,300 instructions as follows. About 23 % are
+slice bounds checks, ``Vec`` pointer and length reloads and loop counters, spread over every
+solver stage (the ``index.rs``, ``vec/mod.rs`` and ``range.rs`` buckets); 3,200 are ``enorm``,
+called about a hundred times per fit on 3- to 5-element vectors; the model (``eval``,
+``jacobian``, glibc ``exp``) is about 6,600; ``iterate`` is 2,700 of its own, 1,200 of them the
+box-constraint logic; ``qrfac`` 1,650, ``lmpar`` 1,100, ``transpose`` 740; per-fit setup
+(``MPFit::new``, ``parse_params``, ``init_lm`` pushes and resizes) about 1,500; the peak search
+and window copy 600 (1.5 %). No single loop dominates. ``perf.patch`` gains its cycles from
+branches, not instructions: the three-sum ``enorm`` mispredicted on every call, and the plain
+sum of squares it reduces to for ordinary magnitudes is branch-free and bit-identical.
+
+Two variants were measured and rejected, both bit-identical in output. Letting ``MPFit`` own the
+workspace buffers for a fit (moved out in ``new``, back in ``Drop``) so the compiler need not
+reload ``Vec`` headers through ``&mut Vec`` fields cost 2.7 % more instructions and 4 % more
+cycles: moving 23 vectors in and out costs more than the reloads. A lane-wise, branch-free peak
+search (eight running maxima merged by lowest index) was 1 % slower at 60 pixels; the serial scan
+mispredicts only a few times per fit. Wall-clock A/B runs of identical binaries varied by 2-8 %
+on this machine even pinned and interleaved, which is why the counters above are the record.
+
+The remaining lever is the 23 % in bounds checks and header reloads, which needs the hot loops
+of ``qrfac``, ``transpose``, ``lmpar`` and ``iterate`` rewritten over iterators or split slices;
+the earlier 864-line slice-binding attempt measured 3 %, and unchecked indexing was not
+considered for vendored numerical code.
+
+Threads And NumPy's BLAS Pool
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``fit_spectra_batch`` scales from 2.03 us per fit on one thread to 0.159 us on 16 and 0.115 us
+on 32 (12.8x and 17.6x on 16 cores with SMT); the fit itself uses no BLAS and its results do not
+depend on thread counts. NumPy's OpenBLAS workers do interact with it: after a BLAS call they
+busy-wait for their ``THREAD_TIMEOUT`` (about 60 ms here) before sleeping, on the SMT siblings of
+the fitting threads. Measured with 32 OpenBLAS threads and 32 Rayon threads, a 400,000-spectrum
+batch started right after a matrix product ran at 0.158 us per fit instead of 0.090, and every
+batch after the first 60 ms ran at full speed. The cost is therefore bounded by one spin window
+per BLAS-to-fit transition: negligible for a long batch, up to 1.75x for a short batch issued
+right after linear algebra. ``benchmarks/throughput.py`` sets ``OPENBLAS_NUM_THREADS=1`` before
+importing NumPy so its short batches measure the fit; a pipeline should do the same only if its
+own BLAS work is light enough not to miss the threads.
 
 Against The C++ Batcher
 ~~~~~~~~~~~~~~~~~~~~~~~
