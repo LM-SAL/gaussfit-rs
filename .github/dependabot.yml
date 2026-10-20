@@ -1,10 +1,21 @@
+# One grouped pull request per ecosystem, and a version must be 7 days old before it is proposed.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        patterns: ["*"]
