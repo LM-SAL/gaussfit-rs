@@ -11,340 +11,148 @@ Peak Detection And Velocity-Window Semantics
 - **Status:** resolved 2026-05-29 to preserve the original C extension behavior.
 - **Owner:** Nabil Freij.
 - **Code:** ``src/spectrum.rs::fit_single_spectrum_core`` (peak-detection block).
-- **Tests encoding current behavior:**
-  ``src/tests/spectrum.rs::rejects_peak_inside_slack_zone``,
+- **Tests:** ``src/tests/spectrum.rs::rejects_peak_inside_slack_zone``,
   ``src/tests/spectrum.rs::returns_no_local_max_when_no_sample_in_search_window``.
 
-Current Behavior
-~~~~~~~~~~~~~~~~
+``fit_single_spectrum_core`` searches for the brightest pixel within
+``|dopp_slit[i] - guide_velocity| <= velocity_range + dv * npix_slack``, rejects with
+``FLAG_NO_LOCAL_MAX`` if the peak is empty, non-positive, or lies outside the strict
+``velocity_range``, and otherwise normalises the fitting window by the peak and runs the
+bounded Levenberg-Marquardt fit. ``npix_slack`` is therefore a vetting band, not an acceptance
+band: a peak found only in the slack band is rejected, as in the MUSE C extension pinned under
+``third_party/c_reference``. Nothing here establishes a line detection; a positive noise peak
+inside the strict interval is fitted.
 
-``fit_single_spectrum_core`` does, in order:
-
-1. Search for the brightest pixel within
-   ``|dopp_slit[i] - guide_velocity| <= velocity_range + dv_slac``, where
-   ``dv_slac = dv * npix_slack``.
-2. Reject with ``FLAG_NO_LOCAL_MAX`` if the peak is empty, non-positive, or lies
-   outside the strict ``velocity_range``.
-3. Normalize the fitting window by the accepted peak and run the bounded
-   Levenberg-Marquardt fit.
-
-This means ``npix_slack`` is a local-maximum vetting band, not an acceptance
-band. A peak found only in the slack band is rejected. This matches the MUSE C
-extension (pinned as the test reference under ``third_party/c_reference``).
-It does not establish a line detection: a positive noise peak inside the strict
-search interval can still be fitted successfully.
-
-Tradeoff
-~~~~~~~~
-
-The strict re-check can mask a valid lower in-range peak if a brighter spurious
-sample appears in the slack band. We accept that tradeoff here because this
-package is used as a drop-in replacement for the C extension, and matching its
-status semantics is more important than changing the scientific selection rule.
-
-If the desired behavior changes later, add an explicit signal-presence criterion
-instead of silently accepting slack-band peaks. A minimum peak signal-to-noise
-or absolute peak threshold would be clearer than overloading ``npix_slack``.
+**Tradeoff.** A brighter spurious sample in the slack band masks a valid lower in-range peak.
+Accepted because this package is a drop-in replacement for the C extension and its status
+semantics matter more than a better selection rule. If that changes, add an explicit
+signal-presence criterion (a minimum peak signal-to-noise or absolute threshold) rather than
+overloading ``npix_slack``.
 
 Bound-Limited Steps And The MPFIT Snap Hazard
 ---------------------------------------------
 
 - **Status:** resolved 2026-09-10 by patching the vendored solver.
 - **Owner:** Nabil Freij.
-- **Code:** ``third_party/rmpfit/src/lib.rs::MPFit::iterate`` (bound clamp; the
-  local patch is ``third_party/rmpfit/bound-snap.patch``, documented in
-  ``third_party/rmpfit/VENDORED.md``), consumed by
-  ``src/gaussian.rs::fit_gaussian_bounded``.
-- **Tests encoding current behavior:**
-  ``src/tests/gaussian.rs::bound_pinned_window_matches_c_reference``,
+- **Code:** ``third_party/rmpfit/bound-snap.patch`` (``MPFit::iterate``), documented in
+  ``third_party/rmpfit/VENDORED.md``; consumed by ``src/gaussian.rs::fit_gaussian_bounded``.
+- **Tests:** ``src/tests/gaussian.rs::bound_pinned_window_matches_c_reference``,
   ``python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall``,
-  ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension``
-  (46 seeds, needs the C reference).
+  ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension`` (46 seeds, needs
+  the C reference).
 
-Current Behavior
-~~~~~~~~~~~~~~~~
+MPFIT scales a step that would cross a parameter bound by ``alpha = (limit - x) / step`` and
+snaps coordinates within one ULP of a limit onto it. ``x + alpha * step`` can land a couple of
+ULP past the limit on either side. Just inside, the parameter is pegged and the fit continues.
+Just outside, it is not snapped: the next step crosses the bound again, ``alpha`` collapses to
+about 1e-14 for every parameter, the trust region with it, and the solver reports ``Par`` (or
+``Both``) with no progress, so ``FLAG_SUCCESS`` arrives with a reduced chi-square up to 74x the
+C reference's. Rounding order decides the side, so each build stalls on its own subset of fits.
+CMPFIT 1.5 and rmpfit 2.0.0 share this code line for line.
 
-MPFIT scales a Levenberg-Marquardt step that would cross a parameter bound by
-``alpha = (limit - x) / step`` so the step stops at the bound, then snaps any
-coordinate within one ULP of a limit onto it. In floating point
-``x + alpha * step`` can land a couple of ULP past the limit, on either side. In
-stock MPFIT (CMPFIT 1.5 and rmpfit 2.0.0 share this code line for line):
+The vendored rmpfit records which bound set ``alpha`` and places that coordinate exactly on its
+limit. Over 14,197 corpus windows 18 fits change, every one an improvement, and Rust is never
+worse than C except for the one ``lmpar`` exception below.
 
-1. A landing just inside the bound is snapped, the parameter counts as pegged
-   from then on, the outward gradient is zeroed, and the fit continues.
-2. A landing just outside is not snapped. On the next iteration the parameter
-   is not pegged, the step crosses the bound again, ``alpha`` collapses to about
-   1e-14 for every parameter, the trust region collapses with it, and the
-   solver reports ``Par`` (or ``Both``) convergence with no progress. The result
-   carries ``FLAG_SUCCESS`` and, on the parity corpus, a reduced chi-square up
-   to 74x higher than the C reference.
-
-Which side a window lands on is decided by rounding order in the linear
-algebra, so each build stalls on its own subset. Over 20 corpus seeds (14,197
-windows fitted by both), stock rmpfit was worse than C on 13 rows and C was
-worse than rmpfit on 13 others, judged by the same tolerance.
-
-The vendored rmpfit records which bound set ``alpha`` and places that coordinate
-exactly on its limit. With the bound-snap patch alone, the recorded measurements
-were: 18 of 14,197 windows change, every one an improvement; no window is worse
-than C f32, C f64 or stock rmpfit; Rust is never worse than C on the 46-seed live
-parity test or a 100-seed sweep (82,368 fits). The subsequent ``lmpar`` correction
-below introduces one documented exception to that last claim.
-
-Tradeoff
-~~~~~~~~
-
-Rust now beats the C reference on the windows where C stalls. The parity
-contract in ``helpers.assert_fit_parity`` is one-sided, apart from the named
-``lmpar`` exception below, so improvements are allowed and expected. Do not
-"repair" the corpus or widen the
-tolerance to make those rows agree.
-
-The patch is carried as a path dependency on ``third_party/rmpfit``. Dependabot
-ignores path dependencies, and it also skips any crate named in a ``[patch]``
-table, so that form buys nothing (maturin omits ``[patch]`` paths from the sdist
-as well). New rmpfit releases must therefore be checked by hand; ``VENDORED.md``
-has the update procedure, and the tests above decide when the patch can be
-dropped.
+**Tradeoff.** The parity contract in ``helpers.assert_fit_parity`` is one-sided: Rust may beat
+C and does on these windows. Do not "repair" the corpus or widen the tolerance to make those
+rows agree. The patch rides on a path dependency, which Dependabot ignores (as it does crates
+named in a ``[patch]`` table), so new rmpfit releases are checked by hand; ``VENDORED.md`` has
+the procedure and the tests above decide when the patch can be dropped.
 
 ``lmpar`` Trust-Region Clamp
 ----------------------------
 
 - **Status:** resolved 2026-09-11 by patching the vendored solver.
 - **Owner:** Nabil Freij.
-- **Code:** ``third_party/rmpfit/src/lib.rs`` (the clamp in ``lmpar``), carried
-  as ``third_party/rmpfit/lmpar-clamp.patch``; documented in ``VENDORED.md``.
-- **Tests encoding current behavior:**
-  ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension``
+- **Code:** ``third_party/rmpfit/lmpar-clamp.patch``, documented in ``VENDORED.md``.
+- **Tests:** ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension``
   (``muse`` seed 44, family ``low_snr``, carries the named exception).
 
-Current Behavior
-~~~~~~~~~~~~~~~~
+Upstream rmpfit 2.0.0 clamps the Levenberg-Marquardt damping parameter with
+``self.par = self.par.max(paru)`` where CMPFIT and MINPACK use ``min``
+(``third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102``); the vendored copy uses ``min``.
+Over 100 corpus seeds (82,368 fits) 68 fits move onto the C reference's values within tolerance
+and one low-SNR fit (``muse`` seed 44, row 165) lands in a different local minimum, reduced
+chi-square 0.804 against C's 0.755 (1.065x).
 
-Upstream rmpfit 2.0.0 clamps the Levenberg-Marquardt damping parameter ``par``
-with ``self.par = self.par.max(paru)`` where CMPFIT and MINPACK use ``min``
-(C reference:
-``third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102``). Every other line of the
-``lmpar`` clamp/update sequence matches. The vendored code corrects this with
-``self.par = self.par.min(paru)``. The trust-region radius is ``delta``; it is
-not the variable changed by this patch.
-
-Tradeoff
-~~~~~~~~
-
-Measured effect over 100 seeds (82,368 corpus fits): 68 fits move onto the C
-reference's values within tolerance, and one low-SNR fit (``muse`` seed 44,
-family ``low_snr``, absolute row 165) moves to a different local minimum, reduced
-chi-square 0.804337 against C's 0.755257 (1.065x). That single row is carried as
-a **named exception** rather than a wider tolerance: ``ACCEPTED_WORSE`` in
-``python/gaussfit_rs/tests/test_c_parity.py``, capped at 1.10x, restricted to
-that row so the other 39 low-SNR rows stay under the gate, and asserted to be
-taken exactly once, so the exception cannot silently go stale and the one-sided
-contract stays meaningful everywhere else.
-
-The commit history of 2026-09-11 records separate pipeline comparisons on MUSE
-simulation data. Those measurements are not an observational validation and are
-not part of the committed parity fixtures. If a future rmpfit release fixes
-``lmpar`` upstream, drop the local patch after checking parity. Keep the exception
-until the corresponding row actually satisfies the normal gate: moving the same
-fix upstream does not by itself change that row's behavior.
+**Tradeoff.** That row is a named exception, ``ACCEPTED_WORSE`` in ``test_c_parity.py``, capped
+at 1.10x, restricted to that row and asserted to be taken exactly once, rather than a wider
+tolerance, so the one-sided contract stays meaningful everywhere else. If upstream fixes
+``lmpar``, drop the patch after checking parity, but keep the exception until the row passes
+the normal gate.
 
 Unconstrained-Fit Indicator
 ---------------------------
 
 - **Status:** resolved 2026-09-11; reported for every fit in the ninth result column.
 - **Owner:** Nabil Freij.
-- **Code:** ``src/spectrum.rs::fit_prepared_spectrum_window`` (the predicate),
-  ``src/api.rs`` (the ``quality`` argument on the two Rust spectrum entry points) and
-  ``python/gaussfit_rs/fitting.py`` (the public wrappers).
+- **Code:** ``src/spectrum.rs::fit_single_spectrum_core`` (the predicate), ``src/api.rs`` (the
+  ninth column of every result row), ``python/gaussfit_rs/fitting.py`` (the public wrappers).
+- **Tests:**
+  ``src/tests/spectrum.rs::quality_bits_separate_constrained_unconstrained_zero_and_pegged_fits``,
+  ``python/gaussfit_rs/tests/test_fit_single_spectrum.py::test_quality_bits_report_unconstrained_successes``
+  and ``::test_batch_quality_bits_match_the_documented_criterion``, and the figure suite
+  (``test_quality_per_family``, the ``q`` marker in ``test_fit_gallery`` /
+  ``test_family_overview``).
 
-Current Behavior
-~~~~~~~~~~~~~~~~
+Both backends return ``FLAG_SUCCESS`` for weakly constrained fits, including fits to positive
+noise fluctuations; convergence is not a detection. Column 8 of every result row therefore
+carries three quality bits (zero for failed fits, which column 7 identifies):
 
-Both backends can return ``FLAG_SUCCESS`` for weakly constrained fits, including
-fits to positive noise fluctuations. Convergence does not establish a detected
-line or a reliable parameter measurement. With the ninth result column, the spectrum
-entry points append a ninth float32 column (``fit_results[8]``, or
-``fit_results[:, 8]`` for a batch) reporting three quality bits. Failed fits have
-zero quality bits and must be checked separately using column 7. The default
-eight-column output and the fitted values are unchanged by enabling quality.
+* **1 (``QUALITY_UNCONSTRAINED``)**: the velocity error is not smaller than ``2 * dv * npix``, or
+  the width error is not smaller than ``width_max - width_min``. A formal error at least as
+  large as the parameter's allowed interval; a diagnostic threshold, not a calibrated test.
+* **2 (``QUALITY_ZERO_ERROR``)**: a formal error is exactly zero, from the near-singular guard in
+  ``src/gaussian.rs`` (non-finite determinant or ``|det| < 1e-30``), a non-positive computed
+  variance, or residual scaling on an exact fit. The bit reports the value, not its cause.
+* **4 (``QUALITY_PEGGED``)**: a fitted parameter sits exactly on a bound (rmpfit clamps onto the
+  bound exactly, so equality is the test).
 
-Bits, not a boolean
-~~~~~~~~~~~~~~~~~~~
+They are bits, not a boolean, because they mean different things and one flag would force one
+policy on every consumer. Pegging in particular is a report, not a verdict: on the ``muse``
+corpus 117 of 336 solved rows set bit 4, including 15 of 15 ``broad`` rows, a broad line
+legitimately pinned at ``width_max``. On the synthetic fixtures 35 % of solved ``muse`` rows and
+11 % of ``wide`` rows set some bit, almost all of it bit 4. After converting column 8 to
+integers (see the user guide), ``flags != 0`` selects any bit and ``(flags & (1|2)) != 0`` large
+or zero errors; neither is an automatic rejection policy. The amplitude interval is excluded on
+purpose: the MUSE configuration uses +/-10 % of the normalisation peak, a detection window
+rather than a physical range, and comparing the amplitude error with it would flag ordinary
+low-SNR fits.
 
-* **1 (``QUALITY_UNCONSTRAINED``)** -- the velocity error is not smaller than ``2*dv*npix``, or the
-  linewidth error is not smaller than ``width_max - width_min``. This reports a
-  formal error at least as large as a parameter's allowed interval; it is a
-  diagnostic threshold, not a calibrated detection or confidence test.
-* **2 (``QUALITY_ZERO_ERROR``)** -- a formal error is exactly 0. The near-singular guard
-  (``src/gaussian.rs``, nonfinite determinant or ``|det| < 1e-30``) returns zeros.
-  Nonpositive computed variances also become zero, and residual scaling can
-  produce zeros on an exact fit with a nonsingular matrix. The absolute
-  determinant threshold depends on scale; a small determinant alone is not a
-  condition-number test. This bit reports the error value, not its cause.
-* **4 (``QUALITY_PEGGED``)** -- a fitted parameter sits exactly on one of its bounds (rmpfit clamps
-  onto the bound exactly, so equality is the test).
-
-They are reported separately because they mean different things and a single boolean forces one
-policy on every consumer. Measured on the ``muse`` corpus (336 solved rows, 117 with bit 4 = 34.8 %),
-pegging is *not* evidence of an unconstrained fit: 15 of 15 ``broad`` rows and 11 of 17 ``narrow``
-rows set it, but so do 5 of 26 ``clean`` rows -- a broad line legitimately pins at ``width_max``.
-After converting column 8 to integers (see the user guide), ``flags != 0``
-selects any bit and ``(flags & (1|2)) != 0`` selects large or zero errors for
-inspection. Neither is an automatic rejection policy: pegged and exact fits
-can be legitimate, and an unflagged fit is not guaranteed to be useful.
-
-The amplitude interval is deliberately excluded: the MUSE configuration uses
-+/-10 % of the normalization peak, a detection window rather than a physical
-range. Comparing the amplitude error with that interval would also flag
-ordinary low-SNR fits.
-
-The MUSE ``fit_single_spectrum_fallback`` calls ``ftoolss.fmpfit_f32_pywrap``,
-which delegates to a C extension. Its agreement with the direct C path is not
-an independent pure-Python solver comparison. The quality column is implemented
-in gaussfit-rs; the C path would need its own implementation to return it.
-
-Measured rates (2026-09-11), as fractions of successful fits in the synthetic
-C-reference fixtures, using each fixture's recorded configuration:
-
-.. list-table::
-   :header-rows: 1
-
-   * - sample (solved rows)
-     - bit 1 span
-     - bit 2 zero
-     - bit 4 pegged
-     - any (``!= 0``)
-   * - ``muse`` corpus, 336
-     - 1.8 %
-     - 5.7 %
-     - 34.8 %
-     - 35.4 %
-   * - ``wide`` corpus, 367
-     - 3.0 %
-     - 0 %
-     - 11.2 %
-     - 11.2 %
-
-Saved Simulation Examples And Covariance Errors
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The saved ``baseline_gpu/spectrum_summed_all.zarr`` input is MURaM-based MUSE
-simulation output. Its configuration names a VDEM model and has a null
-observational filename. An earlier report fitted a reconstructed velocity axis
-with a +/-500 km/s search and sigma bounds of 5-200 km/s. The saved Fe XIX
-pipeline output instead uses its response-derived per-slit axis, a +/-300 km/s
-search, minimum sigma 59.216967 km/s, initial sigma equal to that minimum plus
-10 km/s, and no peak-search slack. Both examples use ``npix=2`` and fitting
-noise of 1 DN, not the cube's stored measurement-error array.
-
-The earlier 11.2 % suspect and 42.5 % any-bit figures are not validated rates
-for the saved pipeline configuration or observations. The following selected
-examples establish problematic fits, not an occurrence rate:
-
-* With the reconstructed settings, flattened row 379 fits pixels ``[522, 527)``
-  with flux ``[6, -1, 9, 0, 4]`` DN. Rust returns sigma 7.5834 km/s, below the
-  40.74-km/s sample spacing, and velocity error 1,124,729.75 km/s. C returns
-  similar parameters and zero errors; both report success.
-* The largest successful saved Fe XIX velocity error occurs at line index 0,
-  y index 89, x index 30 (slit index 5, step index 0). Refitting with the saved
-  configuration reproduces all eight Rust values and the mask ``[170, 175)``.
-  Flux is ``[6, 0, 1, 1, 1]`` DN. Rust and C return velocity errors of
-  3837.236572 and 3837.231201 km/s respectively; Rust quality is 5. The
-  normalization peak is 1 DN because the 6-DN sample is outside the peak-search
-  interval, although it lies inside the fit window. The fit reaches its
-  amplitude upper, velocity lower, and sigma upper bounds.
-
-The MUSE benchmark applies an intensity mask after fitting, before comparison
-statistics. For the saved example, fitted net flux is 13.5453 DN against a
-62.9021-DN threshold; both the GFAT intensity mask and the saved ground-truth
-mask reject it. The saved combined mask also rejects it. Its presence in
-``mom_gfat`` does not demonstrate contamination of the masked statistics.
-The ninth-column diagnostics complement the caller's masking; their benefit
-for the retained population needs to be measured on that population.
-
-The stored ``clean_flux`` trace also needs care. MUSE preserves the expected
-signal before Poisson sampling, but the inspected ``ph2dn`` path converts only
-``flux``. The readout step truncates ``clean_flux`` to integers and labels it
-DN. The saved zeros therefore do not establish zero emission or a calibrated
-DN expectation. The floating-point pre-noise synthesis gives nonzero expected
-photons in both cuts: approximately 0.38-0.95 per sample in the reconstructed
-example and 0.022-0.051 in the saved pipeline example.
-
-Both implementations form the weighted Gaussian Jacobian ``J`` and derive
-formal errors from the inverse of ``J.T @ J``, scaled by
-``sqrt(chi2 / (N - 3))`` when ``N > 3``. These are local covariance estimates,
-not confidence intervals respecting the bounds. In the narrow example, the
-C float32 cofactor calculation produces determinant ``-8.0409013e-11`` and
-negative diagonal variances. ``mp_xerror_scipy`` accepts ``abs(det) > 1e-30``
-and explicitly converts nonpositive variances to zero. This example does not
-enter the Gauss-Jordan fallback; the success status is determined separately.
-
-Rust computes covariance in float64 at its internal parameters and retains
-positive variances here. Its million-scale uncertainty is numerically unstable:
-direct SVD of the Jacobian at the rounded returned parameters gives about
-2.89 million km/s. In the saved pipeline example, SVD gives 3837.23663 km/s,
-agreeing with both backends. A rank-aware QR/SVD covariance calculation would
-address inversion instability; it would not by itself change residual scaling
-or establish a detection.
-
-Limitations
-~~~~~~~~~~~
-
-* Bit 4 is a report, not a verdict, for the reason above; a consumer that masks on it will drop
-  good broad lines.
-* The span bit needs the returned errors and configured velocity/width intervals.
-  Reconstructing pegging additionally needs the actual bounds and normalization
-  peak; the physical amplitude alone does not identify its normalized bound.
-* Residual scaling can produce small nonzero errors for a nearly exact noiseless
-  fit, even with a nonsingular matrix. Covariance inversion can also be unstable.
-  Zero-error detection alone does not identify all unreliable uncertainties.
-* A positive peak is not a signal-to-noise test, and a zero quality mask is not a
-  detection certificate. Apply the caller's intensity masks and evaluate any
-  additional quality policy on the fits that survive them.
-
-Tests
-~~~~~
-
-``src/tests/spectrum.rs::quality_bits_separate_constrained_unconstrained_zero_and_pegged_fits``
-(clean, span, guard-zeroed, pegged and failed fits),
-``python/gaussfit_rs/tests/test_fit_single_spectrum.py::test_quality_bits_are_opt_in_and_report_unconstrained_successes``
-and ``...::test_batch_quality_bits_match_the_documented_criterion`` (bits 1 and 2 equal the
-velocity/width/zero rule recomputed from the returned columns), plus the figure suite
-(``test_quality_per_family``, and the ``q`` marker in ``test_fit_gallery`` /
-``test_family_overview``).
+**Limitations.** Formal errors come from the inverse of ``J.T @ J`` scaled by
+``sqrt(chi2 / (N - 3))``: local covariance estimates in float64 at the fitted parameters, not
+confidence intervals that respect the bounds. Near a singular Hessian the inverse is unstable,
+so a fit can carry a huge error or, through the guard, a zero one; zero-error detection does not
+identify every unreliable uncertainty. Bit 1 needs the configured velocity and width intervals;
+reconstructing bit 4 from physical amplitudes needs the normalisation peak as well. Apply the
+caller's intensity masks first and evaluate any quality policy on the fits that survive them.
 
 Performance
 -----------
 
-- **Status:** measured 2026-09-11; per-fit allocation removed, the rest attributed. Second pass
-  2026-10-20: solver bookkeeping trimmed, the remainder mapped by instruction.
+- **Status:** measured 2026-10-20 on a Ryzen 9 9950X; per-fit allocation removed, solver
+  bookkeeping trimmed, the remainder attributed by instruction.
 - **Owner:** Nabil Freij.
-- **Code:** ``third_party/rmpfit/workspace.patch`` (``MPWorkspace``, ``mpfit_with_workspace``),
-  ``third_party/rmpfit/perf.patch`` (``enorm`` fast path, ``fdjac2`` fills, finite check,
-  ``MPConfig::no_covar``), the per-thread workspace in ``src/gaussian.rs``, the per-thread window
-  buffers in ``src/spectrum.rs``.
-- **Harness:** ``benchmarks/throughput.py`` (``--npix`` sweeps the window; the fitted intercept
-  is the per-fit overhead, the slope the per-sample arithmetic) for the public batch path, and
-  ``src/tests/bench.rs`` (``taskset -c N cargo test --release bench_fit_window -- --ignored
-  --nocapture``) for the fit alone, which under ``perf stat -e cycles:u,instructions:u`` with
-  ``BENCH_ROUNDS=0`` subtracted gives counts per fit that do not drift between runs.
+- **Code:** ``third_party/rmpfit/workspace.patch`` (``MPWorkspace``, ``mpfit_with_workspace``)
+  and ``third_party/rmpfit/perf.patch`` (``enorm`` fast path, ``fdjac2`` fills, finite check,
+  ``MPConfig::no_covar``), the per-thread workspace in ``src/gaussian.rs``, the per-thread
+  window buffers in ``src/spectrum.rs``.
+- **Harness:** ``benchmarks/throughput.py`` times the public batch path (``--npix`` sweeps the
+  window; the fitted intercept is the per-fit overhead, the slope the per-sample arithmetic).
+  ``src/tests/bench.rs`` fits the same data without Python, NumPy or Rayon
+  (``taskset -c N cargo test --release bench_fit_window -- --ignored --nocapture``); under
+  ``perf stat -e cycles:u,instructions:u`` with a ``BENCH_ROUNDS=0`` run subtracted it gives
+  counts per fit. Judge changes by those counts: wall-clock A/B of identical binaries varies
+  2-8 % on this machine even pinned and interleaved.
+- **Gate for any change:** outputs over the 92 ``build_cases`` corpora (46 seeds x muse/wide)
+  compared as raw bytes before and after. Every patch above is bit-identical.
 
 What A Fit Costs
 ~~~~~~~~~~~~~~~~
 
-Single-threaded, a fit costs about 1.4 us fixed plus 0.08 us per sample, so at the pipeline's
-5-sample window most of the time is per-fit work, not arithmetic. Upstream rmpfit made about
-28 heap allocations per fit; the workspace patch removed all of them for 0.24 us per fit
-(the intercept went from 1.78 to 1.43 us on the synthetic sweep, 0.2-0.35 us per row on real
-MUSE rows) with bit-identical output over the parity corpus. glibc's tcache makes an
-allocation cost about 10 ns, so the gain is bounded; a faster allocator does not help.
-
-Second Pass: Where The Instructions Go
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Measured 2026-10-20 on a Ryzen 9 9950X with the pinned harness above, median of three
-interleaved runs, data generation subtracted. A fit is throughput-bound, not latency-bound:
+Three parameters, analytical Jacobian, about 6 accepted steps and 12 evaluations (Jacobian
+calls included) per fit. The fit is throughput-bound, not latency-bound:
 
 .. list-table::
    :header-rows: 1
@@ -352,71 +160,65 @@ interleaved runs, data generation subtracted. A fit is throughput-bound, not lat
    * - window (samples)
      - instructions per fit
      - cycles per fit
-     - after ``perf.patch``
+     - batch, one thread
    * - 5
-     - 41,300
-     - 11,100 (IPC 3.7)
-     - cycles -6.3 %, instructions -0.4 %
+     - 40,700
+     - 10,100 (IPC 4.0)
+     - 1.9 us
    * - 9
      - 48,100
-     - 11,900
-     - cycles -5.1 %, instructions +0.1 %
+     - 11,300
+     - 2.1 us
    * - 21
-     - 77,000
+     - 82,100
      - 17,200
-     - cycles -2.8 %, instructions +0.7 %
+     - 3.3 us
 
-Callgrind on the 5-sample window attributes the 41,300 instructions as follows. About 23 % are
-slice bounds checks, ``Vec`` pointer and length reloads and loop counters, spread over every
-solver stage (the ``index.rs``, ``vec/mod.rs`` and ``range.rs`` buckets); 3,200 are ``enorm``,
-called about a hundred times per fit on 3- to 5-element vectors; the model (``eval``,
-``jacobian``, glibc ``exp``) is about 6,600; ``iterate`` is 2,700 of its own, 1,200 of them the
-box-constraint logic; ``qrfac`` 1,650, ``lmpar`` 1,100, ``transpose`` 740; per-fit setup
-(``MPFit::new``, ``parse_params``, ``init_lm`` pushes and resizes) about 1,500; the peak search
-and window copy 600 (1.5 %). No single loop dominates. ``perf.patch`` gains its cycles from
-branches, not instructions: the three-sum ``enorm`` mispredicted on every call, and the plain
-sum of squares it reduces to for ordinary magnitudes is branch-free and bit-identical.
+Where the instructions go (callgrind, 5-sample window): about 23 % are slice bounds checks,
+``Vec`` pointer and length reloads and loop counters, spread over every solver stage; ``enorm``
+8 % (about a hundred calls per fit on 3- to 5-element vectors); the model and glibc ``exp``
+16 %; ``iterate`` 7 %, half of it the box-constraint logic; per-fit setup (``MPFit::new``,
+``parse_params``, ``init_lm``) 5 %; ``qrfac`` 4 %, ``lmpar`` 3 %, ``transpose`` 2 %; the peak
+search and window copy under 2 %. No single loop dominates.
 
-Two variants were measured and rejected, both bit-identical in output. Letting ``MPFit`` own the
-workspace buffers for a fit (moved out in ``new``, back in ``Drop``) so the compiler need not
-reload ``Vec`` headers through ``&mut Vec`` fields cost 2.7 % more instructions and 4 % more
-cycles: moving 23 vectors in and out costs more than the reloads. A lane-wise, branch-free peak
-search (eight running maxima merged by lowest index) was 1 % slower at 60 pixels; the serial scan
-mispredicts only a few times per fit. Wall-clock A/B runs of identical binaries varied by 2-8 %
-on this machine even pinned and interleaved, which is why the counters above are the record.
+What the patches bought: the workspace removed about 28 heap allocations per fit, 0.24 us (the
+intercept went from 1.78 to 1.43 us). ``perf.patch`` cut cycles per fit by 7 % at 5 samples, 6 %
+at 9 and 4 % at 21 with the instruction count unchanged, by inlining ``enorm`` and removing the
+data-dependent branches from its loop (its three-sum form reduces exactly to the plain sum of
+squares when no component is tiny or huge) and by dropping fills and a covariance pass whose
+results were never read. Against MUSE's ``fastfit2`` C++ batcher (the same cmpfit, measured
+before that reference was dropped from the repo) Rust was level with an ``-O3`` build
+single-threaded, 15-20 % slower than the extension built with Python's default ``CFLAGS``, and
+faster at 32 threads.
+
+Measured And Rejected
+~~~~~~~~~~~~~~~~~~~~~
+
+All bit-identical in output; recorded so they are not tried twice.
+
+* Binding each solver stage's buffers to local slices to drop bounds checks: 3 % for an
+  864-line diff.
+* ``MPFit`` owning the workspace buffers for a fit (moved out in ``new``, back in ``Drop``) so
+  the compiler need not reload ``Vec`` headers: +3 % instructions, +4 % cycles. Moving 23
+  vectors costs more than the reloads.
+* A lane-wise, branch-free peak search (eight running maxima merged by lowest index): 1-2 %
+  slower. The serial scan is under 2 % of a fit and mispredicts only a few times.
+* Precision, ``exp`` and the ISA are not the cost: double against float is within 2 %, and
+  ``-C target-cpu=x86-64-v3`` buys 3-4 %, kept as the opt-in build in the installation guide.
 
 The remaining lever is the 23 % in bounds checks and header reloads, which needs the hot loops
-of ``qrfac``, ``transpose``, ``lmpar`` and ``iterate`` rewritten over iterators or split slices;
-the earlier 864-line slice-binding attempt measured 3 %, and unchecked indexing was not
-considered for vendored numerical code.
+of ``qrfac``, ``transpose``, ``lmpar`` and ``iterate`` rewritten over iterators or split slices.
+The solver is under 1 % of a pipeline run; the end-to-end lever was per-slit staging on the
+caller's side, which the ``slit_index`` argument of ``fit_spectra_batch`` removes.
 
 Threads And NumPy's BLAS Pool
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``fit_spectra_batch`` scales from 2.03 us per fit on one thread to 0.159 us on 16 and 0.115 us
-on 32 (12.8x and 17.6x on 16 cores with SMT); the fit itself uses no BLAS and its results do not
-depend on thread counts. NumPy's OpenBLAS workers do interact with it: after a BLAS call they
-busy-wait for their ``THREAD_TIMEOUT`` (about 60 ms here) before sleeping, on the SMT siblings of
-the fitting threads. Measured with 32 OpenBLAS threads and 32 Rayon threads, a 400,000-spectrum
-batch started right after a matrix product ran at 0.158 us per fit instead of 0.090, and every
-batch after the first 60 ms ran at full speed. The cost is therefore bounded by one spin window
-per BLAS-to-fit transition: negligible for a long batch, up to 1.75x for a short batch issued
-right after linear algebra. ``benchmarks/throughput.py`` sets ``OPENBLAS_NUM_THREADS=1`` before
-importing NumPy so its short batches measure the fit; a pipeline should do the same only if its
-own BLAS work is light enough not to miss the threads.
-
-Against The C++ Batcher
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Compared with MUSE's ``fastfit2`` C++ extension on real rows at matched thread counts, Rust is
-level with a plain ``-O3`` build of the same cmpfit and 15-20 % slower per row single-threaded
-than the extension Python's default ``CFLAGS`` produce (``-fno-strict-overflow`` alone halves
-GCC's cost in the cmpfit helpers); at 32 threads Rust is faster. Iteration counts are not the
-cause: on identical rows Rust accepts 3-5 % more steps and evaluates the model 1-5 % fewer times.
-Nor are precision (the same C++ in double is within 2 % of float), ``exp``, the peak search or
-the ISA (``x86-64-v3`` buys 3-4 %, documented as an opt-in build in the installation guide).
-Instruction counts put the remainder in the port's per-iteration bookkeeping (``iterate``,
-``qrfac``, ``transpose``): bounds checks and ``Vec`` indexing where cmpfit walks raw pointers.
-A patch binding each stage's buffers to local slices recovered 3 % for an 864-line diff and was
-not kept. The solver is under 1 % of a pipeline run; the end-to-end lever was the per-slit
-staging on the caller's side, which the ``slit_index`` argument of ``fit_spectra_batch`` removes.
+``fit_spectra_batch`` releases the GIL and fits rows in parallel with Rayon: 1.9 us per fit on
+one thread, 0.15 us on 16 and 0.12 us on 32 (16 cores with SMT). Results never depend on thread
+counts. NumPy's OpenBLAS workers busy-wait for about 60 ms after a BLAS call on the SMT siblings
+of the fitting threads: a 400,000-spectrum batch started right after a matrix product ran 1.75x
+slower, and every batch after that window at full speed. The cost is one spin window per
+BLAS-to-fit transition, negligible for a long batch. ``benchmarks/throughput.py`` sets
+``OPENBLAS_NUM_THREADS=1`` before importing NumPy; a pipeline should do the same only if its own
+BLAS work is light.
