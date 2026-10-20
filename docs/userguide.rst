@@ -25,7 +25,7 @@ Levenberg-Marquardt Gaussian fit on the surrounding pixel window.
        velocity_range=200.0,
        npix=10,
        npix_slack=2,
-       dv=12.0,
+       dv=float(np.median(np.gradient(velocity_grid))),  # km/s per pixel
        width_min=5.0,
        width_max=100.0,
        width_guess=30.0,
@@ -47,7 +47,7 @@ per row or a scalar for all rows.
 
 .. code-block:: python
 
-   from gaussfit_rs import fit_spectra_batch
+   from gaussfit_rs import FLAG_SUCCESS, fit_spectra_batch
 
    fits, indices = fit_spectra_batch(
        spectra=spectra_2d,       # (N, M) float32, C-contiguous
@@ -57,7 +57,7 @@ per row or a scalar for all rows.
        velocity_range=200.0,
        npix=10,
        npix_slack=2,
-       dv=12.0,
+       dv=float(np.median(np.gradient(velocity_grid))),
        width_min=5.0,
        width_max=100.0,
        width_guess=30.0,
@@ -65,7 +65,7 @@ per row or a scalar for all rows.
        amplitude_rel_max=2.0,
    )
 
-   converged = fits[:, 7] == 0.0   # FLAG_SUCCESS
+   converged = fits[:, 7] == FLAG_SUCCESS
    velocities = fits[converged, 1]  # km/s
 
 When the velocity grid differs per slit, pass the grids as one ``(n_slit, M)`` table and
@@ -170,7 +170,8 @@ catches.
 Solver counts
 -------------
 
-``meta=True`` adds one more return value: an ``int32`` array of ``[n_iter, n_fev]`` per fit
+``meta=True`` adds one more return value to every fitting function: an ``int32`` array of
+``[n_iter, n_fev]`` per fit
 (accepted Levenberg-Marquardt iterations and model evaluations, Jacobian calls included), ``-1``
 where the fit did not run or did not converge. It is there for profiling and for comparing
 against other MPFIT builds.
@@ -179,8 +180,7 @@ Tolerances
 ----------
 
 Every fitting function takes ``xtol``, ``ftol``, ``gtol`` (default ``1e-6``) and ``max_iter``
-(default 2000), which must be finite and positive. Tighten them for high-SNR data; relax them
-(for example ``gtol=1e-4``) for bulk runs where exact convergence matters less. The other
+(default 2000), the MUSE C extension's settings; they must be finite and positive. The other
 options must be finite, with positive ``npix`` and ``dv``, non-negative ``npix_slack`` and
 ``velocity_range``, and increasing amplitude and width bounds.
 
@@ -201,5 +201,5 @@ without the peak search, for use outside the spectral pipeline:
        upper_bounds=[5.0, 50.0, 40.0],
    )
 
-The row has the same layout as above without the peak-search flag: *flag* is
+The row holds columns 0-7 of the layout above, with no quality column; *flag* is
 ``FLAG_SUCCESS`` or ``FLAG_NO_CONVERGENCE``.
