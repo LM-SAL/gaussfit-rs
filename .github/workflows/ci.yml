@@ -43,23 +43,19 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: cargo test
         run: cargo test
-  core:
+  tests:
+    # Every supported Python once and every platform once: the C-parity job needs Linux for
+    # the pinned C extension, the newest Python goes on Linux too, the others on macOS and Windows.
     needs: [rust]
-    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
-    with:
-      submodules: false
-      toxdeps: tox-pypi-filter
-      envs: |
-        - linux: py314
-
-  c_parity:
-    needs: [rust]
-    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@22ddf09dfabb443adddfb9f861b7d41a787d6b1a # v3.0.3
     with:
       submodules: false
       toxdeps: tox-pypi-filter
       envs: |
         - linux: py313-cparity
+        - linux: py315
+        - macos: py314
+        - windows: py312
 
   sdist_verify:
     runs-on: ubuntu-latest
@@ -88,19 +84,8 @@ jobs:
           python -m pip install --user dist/*.tar.gz
           python -c "import gaussfit_rs; print(gaussfit_rs.__version__)"
 
-  test:
-    needs: [core, sdist_verify]
-    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
-    with:
-      submodules: false
-      toxdeps: tox-pypi-filter
-      envs: |
-        - macos: py313
-        - windows: py312
-        - linux: py315
-
   docs:
-    needs: [core]
+    needs: [rust]
     uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
     with:
       default_python: "3.14"
@@ -111,13 +96,15 @@ jobs:
         - linux: build_docs
 
   build_dists:
+    # Twelve wheels with LTO: built for tags, and for a PR labelled "Run publish" to rehearse
+    # a release, not on every push to main or the weekly schedule.
     if: |
-      github.event_name != 'pull_request' ||
+      startsWith(github.ref, 'refs/tags/v') ||
       (
         github.event_name == 'pull_request' &&
         contains(github.event.pull_request.labels.*.name, 'Run publish')
       )
-    needs: [test, docs, c_parity]
+    needs: [tests, docs, sdist_verify]
     uses: OpenAstronomy/github-actions-workflows/.github/workflows/publish.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
     with:
       sdist: true
