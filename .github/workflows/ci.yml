@@ -57,7 +57,10 @@ jobs:
         - macos: py314
         - windows: py312
 
-  sdist_verify:
+  dist_check:
+    # The sdist and wheel must carry metadata PyPI accepts: twine check --strict is the check
+    # the publish action runs before uploading, moved to PR time; check-wheel-contents catches
+    # layout mistakes; installing from the sdist proves it ships the vendored rmpfit crate.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,20 +71,20 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: stable
-      - name: Build source distribution
+      - name: Build the source distribution and a wheel from it
         run: |
-          python -m pip install -U --user build
-          python -m build . --sdist
-      - name: Check source distribution
+          python -m pip install -U build twine check-wheel-contents
+          python -m build .
+      - name: Check metadata and wheel layout
         run: |
-          python -m pip install -U --user twine
-          python -m twine check dist/*
-      - name: Install from source distribution
+          twine check --strict dist/*
+          check-wheel-contents dist/*.whl
+      - name: Install from the source distribution
         run: |
-          python -m pip install --user dist/*.tar.gz
+          python -m pip install dist/*.tar.gz
           python -c "import gaussfit_rs; print(gaussfit_rs.__version__)"
 
   docs:
@@ -104,7 +107,7 @@ jobs:
         github.event_name == 'pull_request' &&
         contains(github.event.pull_request.labels.*.name, 'Run publish')
       )
-    needs: [tests, docs, sdist_verify]
+    needs: [tests, docs, dist_check]
     uses: OpenAstronomy/github-actions-workflows/.github/workflows/publish.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
     with:
       sdist: true
