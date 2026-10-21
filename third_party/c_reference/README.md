@@ -63,7 +63,7 @@ only advances the iteration count on accepted steps, so some inputs never
 return: NaN noise or NaN velocity values inside the fit window, inf pixels,
 zero noise, and at least one finite corpus case (`muse` seed 27). Run the
 generator and any new sweep under a watchdog, and list seeds that hang in
-`HANGS_C` in `test_c_parity.py`. rmpfit (since 2.0.2) carries a
+`HANGS_C` in `test_c_parity.py`. rmpfit carries a
 bound-snap fix that stock CMPFIT lacks, so Rust may legitimately beat this
 reference on windows where C stalls at a bound; the parity contract is
 one-sided for that reason.

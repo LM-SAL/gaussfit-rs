@@ -58,8 +58,8 @@ jobs:
         - windows: py312
 
   dist_check:
-    # The sdist and wheel must carry metadata PyPI accepts: twine check --strict is the check
-    # the publish action runs before uploading, moved to PR time; check-wheel-contents catches
+    # The sdist and wheel must carry metadata PyPI accepts: twine check --strict, the check the
+    # publish action runs before uploading, runs here on every PR; check-wheel-contents catches
     # layout mistakes; installing from the sdist proves it ships the vendored rmpfit crate.
     runs-on: ubuntu-latest
     steps:
