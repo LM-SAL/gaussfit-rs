@@ -124,8 +124,8 @@ impl MPFitter for GaussianProblem<'_> {
 /// The fit is delegated to [`rmpfit`], a pure-Rust port of the CMPFIT/MINPACK
 /// `mpfit` routine, so the convergence semantics match the original C
 /// extension. The vendored copy in `third_party/rmpfit` carries local
-/// patches (a bound-snap fix, the MINPACK `lmpar` clamp, and a reusable
-/// per-thread workspace so a fit allocates nothing); see
+/// performance patches (a reusable per-thread workspace so a fit allocates
+/// nothing, and solver bookkeeping trims); see
 /// `third_party/rmpfit/VENDORED.md`. Parameter errors use the full
 /// three-parameter Hessian, including parameters at their bounds, matching
 /// the C SciPy-style covariance calculation.

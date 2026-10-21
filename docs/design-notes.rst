@@ -32,10 +32,11 @@ overloading ``npix_slack``.
 Bound-Limited Steps And The MPFIT Snap Hazard
 ---------------------------------------------
 
-- **Status:** resolved 2026-09-10 by patching the vendored solver.
+- **Status:** resolved 2026-09-10 by patching the vendored solver; merged upstream in rmpfit
+  2.0.2, local patch dropped 2026-10-21.
 - **Owner:** Nabil Freij.
-- **Code:** ``third_party/rmpfit/bound-snap.patch`` (``MPFit::iterate``), documented in
-  ``third_party/rmpfit/VENDORED.md``; consumed by ``src/gaussian.rs::fit_gaussian_bounded``.
+- **Code:** rmpfit 2.0.2 ``MPFit::iterate``, noted in ``third_party/rmpfit/VENDORED.md``;
+  consumed by ``src/gaussian.rs::fit_gaussian_bounded``.
 - **Tests:** ``src/tests/gaussian.rs::bound_pinned_window_matches_c_reference``,
   ``python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall``,
   ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension`` (46 seeds, needs
@@ -50,37 +51,38 @@ about 1e-14 for every parameter, the trust region with it, and the solver report
 C reference's. Rounding order decides the side, so each build stalls on its own subset of fits.
 CMPFIT 1.5 and rmpfit 2.0.0 share this code line for line.
 
-The vendored rmpfit records which bound set ``alpha`` and places that coordinate exactly on its
+rmpfit 2.0.2 records which bound set ``alpha`` and places that coordinate exactly on its
 limit. Over 14,197 corpus windows 18 fits change, every one an improvement, and Rust is never
 worse than C except for the one ``lmpar`` exception below.
 
 **Tradeoff.** The parity contract in ``helpers.assert_fit_parity`` is one-sided: Rust may beat
 C and does on these windows. Do not "repair" the corpus or widen the tolerance to make those
-rows agree. The patch rides on a path dependency, which Dependabot ignores (as it does crates
-named in a ``[patch]`` table), so new rmpfit releases are checked by hand; ``VENDORED.md`` has
-the procedure and the tests above decide when the patch can be dropped.
+rows agree. rmpfit is a path dependency, which Dependabot ignores (as it does crates named in a
+``[patch]`` table), so new releases are checked by hand (``VENDORED.md``) and the tests above
+guard the upstream fix against regression.
 
 ``lmpar`` Trust-Region Clamp
 ----------------------------
 
-- **Status:** resolved 2026-09-11 by patching the vendored solver.
+- **Status:** resolved 2026-09-11 by patching the vendored solver; merged upstream in rmpfit
+  2.0.2, local patch dropped 2026-10-21.
 - **Owner:** Nabil Freij.
-- **Code:** ``third_party/rmpfit/lmpar-clamp.patch``, documented in ``VENDORED.md``.
+- **Code:** rmpfit 2.0.2 ``MPFit::lmpar``, noted in ``VENDORED.md``.
 - **Tests:** ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension``
   (``muse`` seed 44, family ``low_snr``, carries the named exception).
 
 Upstream rmpfit 2.0.0 clamps the Levenberg-Marquardt damping parameter with
 ``self.par = self.par.max(paru)`` where CMPFIT and MINPACK use ``min``
-(``third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102``); the vendored copy uses ``min``.
+(``third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102``); 2.0.2 uses ``min``.
 Over 100 corpus seeds (82,368 fits) 68 fits move onto the C reference's values within tolerance
 and one low-SNR fit (``muse`` seed 44, row 165) lands in a different local minimum, reduced
 chi-square 0.804 against C's 0.755 (1.065x).
 
 **Tradeoff.** That row is a named exception, ``ACCEPTED_WORSE`` in ``test_c_parity.py``, capped
 at 1.10x, restricted to that row and asserted to be taken exactly once, rather than a wider
-tolerance, so the one-sided contract stays meaningful everywhere else. If upstream fixes
-``lmpar``, drop the patch after checking parity, but keep the exception until the row passes
-the normal gate.
+tolerance, so the one-sided contract stays meaningful everywhere else. Upstream's ``min`` gives
+the same outputs as the dropped patch, so the exception stays until the row passes the normal
+gate.
 
 Unconstrained-Fit Indicator
 ---------------------------

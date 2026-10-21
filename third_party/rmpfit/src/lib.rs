@@ -1171,8 +1171,8 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
         }
         let m = self.m;
         for j in 0..self.nfree {
-            let lpegged = j < self.qllim.len() && self.x[j] == self.llim[j];
-            let upegged = j < self.qulim.len() && self.x[j] == self.ulim[j];
+            let lpegged = self.qllim[j] && self.x[j] == self.llim[j];
+            let upegged = self.qulim[j] && self.x[j] == self.ulim[j];
             let mut sum = 0.;
             // If the parameter is pegged at a limit, compute the gradient direction
             let ij = j * m;
@@ -1656,8 +1656,6 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
          *     set par to the closer endpoint.
          */
         self.par = self.par.max(parl);
-        // gaussfit-rs local patch (see VENDORED.md): CMPFIT/MINPACK clamp the
-        // upper end with min, upstream rmpfit uses max here, a port deviation.
         self.par = self.par.min(paru);
         if self.par == 0. {
             self.par = gnorm / dxnorm;
@@ -1924,10 +1922,7 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
              * we should take a step in the same direction but shorter distance.
              * The step should take us right to the limit in that case.
              */
-            // gaussfit-rs local patch (see VENDORED.md): remember which bound
-            // limited alpha so that coordinate can be placed exactly on it.
-            let mut alpha_limited_low: Option<usize> = None;
-            let mut alpha_limited_up: Option<usize> = None;
+            let mut limit_hit: Option<(usize, f64)> = None;
             for j in 0..self.nfree {
                 let lpegged = self.qllim[j] && self.x[j] <= self.llim[j];
                 let upegged = self.qulim[j] && self.x[j] >= self.ulim[j];
@@ -1939,19 +1934,17 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
                     self.wa1[j] = 0.;
                 }
                 if dwa1 && self.qllim[j] && self.x[j] + self.wa1[j] < self.llim[j] {
-                    let a_lo = (self.llim[j] - self.x[j]) / self.wa1[j];
-                    if a_lo < alpha {
-                        alpha = a_lo;
-                        alpha_limited_low = Some(j);
-                        alpha_limited_up = None;
+                    let a = (self.llim[j] - self.x[j]) / self.wa1[j];
+                    if a < alpha {
+                        alpha = a;
+                        limit_hit = Some((j, self.llim[j]));
                     }
                 }
                 if dwa1 && self.qulim[j] && self.x[j] + self.wa1[j] > self.ulim[j] {
-                    let a_up = (self.ulim[j] - self.x[j]) / self.wa1[j];
-                    if a_up < alpha {
-                        alpha = a_up;
-                        alpha_limited_up = Some(j);
-                        alpha_limited_low = None;
+                    let a = (self.ulim[j] - self.x[j]) / self.wa1[j];
+                    if a < alpha {
+                        alpha = a;
+                        limit_hit = Some((j, self.ulim[j]));
                     }
                 }
             }
@@ -1959,20 +1952,6 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
             for j in 0..self.nfree {
                 self.wa1[j] *= alpha;
                 self.wa2[j] = self.x[j] + self.wa1[j];
-                /*
-                 * gaussfit-rs local patch (see VENDORED.md): land the
-                 * coordinate that limited alpha exactly on its bound.
-                 * x + alpha*wa1 can round a few ULP past the limit, which
-                 * leaves the peg test (x <= llim) false and re-triggers the
-                 * clamp on the next iteration, collapsing alpha for every
-                 * parameter and ending the fit with no progress.
-                 */
-                if Some(j) == alpha_limited_low {
-                    self.wa2[j] = self.llim[j];
-                }
-                if Some(j) == alpha_limited_up {
-                    self.wa2[j] = self.ulim[j];
-                }
                 /*
                  * Adjust the output values.  If the step put us exactly
                  * on a boundary, make sure it is exact.
@@ -1989,6 +1968,10 @@ impl<'a, F: MPFitter> MPFit<'a, F> {
                 if self.qllim[j] && self.wa2[j] <= llim1 {
                     self.wa2[j] = self.llim[j];
                 }
+            }
+            // x + alpha * wa1 can round a few ULP inside the limit, past the snap band
+            if let Some((j, limit)) = limit_hit {
+                self.wa2[j] = limit;
             }
         }
         for j in 0..self.nfree {
@@ -2643,8 +2626,8 @@ mod tests {
         match res {
             Ok(status) => {
                 assert_eq!(status.success, MPSuccess::Chi);
-                assert_eq!(status.n_iter, 27);
-                assert_eq!(status.n_fev, 134);
+                assert_eq!(status.n_iter, 28);
+                assert_eq!(status.n_fev, 139);
                 assert_close(status.best_norm, 10.35003196, 1e-6, 1e-9);
                 assert_close(init[0], 0.48044336, 1e-6, 1e-9);
                 assert_close(init[1], 4.55075247, 1e-6, 1e-9);
@@ -3495,8 +3478,8 @@ mod tests {
         match res {
             Ok(status) => {
                 assert_eq!(status.success, MPSuccess::Chi);
-                assert_eq!(status.n_iter, 27);
-                assert_eq!(status.n_fev, 56);
+                assert_eq!(status.n_iter, 28);
+                assert_eq!(status.n_fev, 58);
                 assert_close(status.best_norm, 10.35003196, 1e-6, 1e-9);
                 assert_close(init[0], 0.48044336, 1e-6, 1e-9);
                 assert_close(init[1], 4.55075247, 1e-6, 1e-9);
@@ -3655,5 +3638,121 @@ mod tests {
                 ..MPConfig::new()
             },
         );
+    }
+
+    #[test]
+    fn free_param_at_unused_limit() {
+        struct Bounded {
+            pars: [MPPar; 2],
+        }
+
+        impl MPFitter for Bounded {
+            fn eval(&mut self, params: &[f64], deviates: &mut [f64]) -> MPResult<()> {
+                deviates[0] = params[0] + 3.0;
+                deviates[1] = params[1] - 5.0;
+                Ok(())
+            }
+
+            fn number_of_points(&self) -> usize {
+                2
+            }
+
+            fn parameters(&self) -> &[MPPar] {
+                &self.pars
+            }
+        }
+        let mut l = Bounded {
+            pars: [
+                MPPar {
+                    limited_low: true,
+                    limit_low: 0.0,
+                    ..MPPar::new()
+                },
+                MPPar::new(),
+            ],
+        };
+        let mut init = [10., 0.];
+        let res = l.mpfit(&mut init);
+        match res {
+            Ok(_) => {
+                assert_close(init[0], 0.0, 1e-6, 1e-9);
+                assert_close(init[1], 5.0, 1e-6, 1e-9);
+            }
+            Err(err) => {
+                panic!("Error in Bounded fit: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn bound_limited_step_lands_on_limit() {
+        struct Lorentzian {
+            x: Vec<f64>,
+            y: Vec<f64>,
+            pars: [MPPar; 4],
+        }
+
+        impl MPFitter for Lorentzian {
+            fn eval(&mut self, params: &[f64], deviates: &mut [f64]) -> MPResult<()> {
+                for ((d, x), y) in deviates.iter_mut().zip(self.x.iter()).zip(self.y.iter()) {
+                    let z = (*x - params[1]) / params[2];
+                    *d = *y - (params[0] / (1.0 + z * z) + params[3]);
+                }
+                Ok(())
+            }
+
+            fn number_of_points(&self) -> usize {
+                self.x.len()
+            }
+
+            fn parameters(&self) -> &[MPPar] {
+                &self.pars
+            }
+        }
+        let x: Vec<f64> = (0..41).map(|i| -5.0 + 0.25 * i as f64).collect();
+        let y = x
+            .iter()
+            .map(|x| {
+                let z = (x - 0.4) / 1.2;
+                3.0 / (1.0 + z * z) - 0.3
+            })
+            .collect();
+        let mut l = Lorentzian {
+            x,
+            y,
+            pars: [
+                MPPar {
+                    limited_low: true,
+                    limit_low: 0.0,
+                    ..MPPar::new()
+                },
+                MPPar::new(),
+                MPPar {
+                    limited_low: true,
+                    limit_low: 0.05,
+                    ..MPPar::new()
+                },
+                MPPar {
+                    limited_low: true,
+                    limit_low: 0.0,
+                    ..MPPar::new()
+                },
+            ],
+        };
+        let mut init = [0.5, 2.2, 2.9, 1.8];
+        let res = l.mpfit(&mut init);
+        match res {
+            Ok(status) => {
+                assert_eq!(status.success, MPSuccess::Chi);
+                assert_close(status.best_norm, 0.89840365, 1e-6, 1e-9);
+                assert_close(init[0], 2.82938272, 1e-6, 1e-9);
+                assert_close(init[1], 0.40107936, 1e-6, 1e-9);
+                assert_close(init[2], 0.93972191, 1e-6, 1e-9);
+                assert_eq!(init[3], 0.0);
+            }
+            Err(err) => {
+                panic!("Error in Lorentzian fit: {err}");
+            }
+        }
     }
 }

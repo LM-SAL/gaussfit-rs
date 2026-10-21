@@ -53,9 +53,9 @@ fn rejects_non_positive_sigma_lower_bound() {
 
 #[test]
 fn bound_pinned_window_matches_c_reference() {
-    // Regression guard for the MPFIT bound-snap stall fixed in
-    // third_party/rmpfit (VENDORED.md): a bound-limited step landed sigma two
-    // ULP above width_min, alpha then collapsed to ~1e-14 and stock rmpfit
+    // Regression guard for the MPFIT bound-snap stall fixed in rmpfit 2.0.2
+    // (third_party/rmpfit/VENDORED.md): a bound-limited step landed sigma two
+    // ULP above width_min, alpha then collapsed to ~1e-14 and rmpfit 2.0.0
     // reported `Par` after 4 iterations at reduced chi-square 56.66. Expected
     // values are MUSE's float32 C extension output for this corpus window
     // (parameter set "wide", seed 1, row 314), normalised by the peak.

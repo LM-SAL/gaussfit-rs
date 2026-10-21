@@ -239,10 +239,10 @@ def test_dtype_auto_conversion():
 
 
 def test_bound_limited_step_does_not_stall():
-    # Regression guard for the MPFIT bound-snap stall fixed in third_party/rmpfit
-    # (VENDORED.md). C-parity corpus window "wide" seed 1 row 314, normalised by the
-    # peak: sigma belongs on width_min. Stock rmpfit 2.0.0 lands sigma two ULP above
-    # the bound and reports success at reduced chi-square 56.66; C reaches 0.7628.
+    # Regression guard for the MPFIT bound-snap stall fixed in rmpfit 2.0.2
+    # (third_party/rmpfit/VENDORED.md). C-parity corpus window "wide" seed 1 row 314,
+    # normalised by the peak: sigma belongs on width_min. Stock rmpfit 2.0.0 lands sigma two ULP
+    # above the bound and reports success at reduced chi-square 56.66; C reaches 0.7628.
     x = np.array(
         [
             -238.98304748535156,
