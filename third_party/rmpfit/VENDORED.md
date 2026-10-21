@@ -15,35 +15,27 @@ a pure-Rust port of the CMPFIT/MINPACK Levenberg-Marquardt solver, carrying two 
 | License | MIT (see `LICENSE`) |
 | Upstream `src/lib.rs` sha256 | `039bfb8dd7f340853e455760043a444b640f4efd293b71f4f9d94389a482412c` |
 | Vendored `src/lib.rs` sha256 | `36c651ac809b0329448b08662ba5013e0d490bac745bf26ff7d0b0b6a353016b` |
-| Vendored on | 2026-09-10 (2.0.0); `perf.patch` added 2026-10-20; rebased onto 2.0.2 on 2026-10-21 |
+| Vendored on | 2026-10-21 |
 
 `Cargo.toml` and `README.md` are the published files, unchanged. The registry artifacts
 (`Cargo.toml.orig`, `Cargo.lock`, `.cargo-ok`, `.cargo_vcs_info.json`, `.gitignore`) are not
 copied; `Cargo.toml.orig` in particular breaks `maturin sdist`.
 
-## Fixed upstream
+## Upstream behaviour relied on
 
-2.0.0 was vendored with two correctness patches that upstream merged in 2.0.2, so they are gone:
+Two upstream behaviours matter here. A step limited by a parameter bound lands that coordinate
+exactly on the limit (`MPFit::iterate`): `x + alpha * step` can round a couple of ULP past it,
+miss MPFIT's one-ULP snap and stall the fit with `alpha` ~1e-14, as CMPFIT can.
+`src/tests/gaussian.rs::bound_pinned_window_matches_c_reference` and
+`python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall` guard
+it. And `MPFit::lmpar` clamps the trust-region parameter with `min` as CMPFIT and MINPACK do,
+which is where the one row named in "Accepted C-Parity Exception" in `docs/design-notes.rst`
+comes from. `src/gaussian.rs` bounds every parameter on both sides, so upstream's handling of
+unbounded parameters in `check_limits` does not apply.
 
-- `bound-snap`: a bound-limited step `x + alpha * step` could round a couple of ULP past the
-  limit, miss MPFIT's one-ULP snap, and stall the fit with `alpha` ~1e-14. 2.0.2 records which
-  bound set `alpha` and lands that coordinate on its limit, as the local patch did (upstream
-  applies it after the snap loop rather than before; the result is the same). See
-  "Bound-Limited Steps And The MPFIT Snap Hazard" in `docs/design-notes.rst`.
-- `lmpar-clamp`: upstream 2.0.0 clamped the trust-region radius with `max(paru)` where
-  CMPFIT/MINPACK use `min`. See "`lmpar` Trust-Region Clamp" in `docs/design-notes.rst`; the
-  one row it moves into a worse local minimum than C is still `ACCEPTED_WORSE` in
-  `python/gaussfit_rs/tests/test_c_parity.py`, because 2.0.2 makes the same choice.
-
-2.0.2 also makes `check_limits` test `qllim`/`qulim` rather than the vector length, so an
-unbounded parameter sitting at 0 is no longer treated as pegged. `src/gaussian.rs` bounds every
-parameter on both sides, so this changes nothing here. Moving from 2.0.0 + four patches to
-2.0.2 + two left the outputs over the 92 parity corpora (38,083 rows) bit-identical.
-
-The crate's own `gaussian` test (numerical derivatives) expects 28 iterations in 2.0.2 and sees
-27 on macOS arm64, stock or patched; `gauss_analytical`, the path `src/gaussian.rs` uses,
-passes. The crate tests are not part of this repo's test run (`cargo test` covers the root
-crate only).
+The crate's own `gaussian` test (numerical derivatives) expects 28 iterations and sees 27 on
+macOS arm64; `gauss_analytical`, the path `src/gaussian.rs` uses, passes. The crate tests are
+not part of this repo's test run (`cargo test` covers the root crate only).
 
 ## Why still vendored
 
@@ -127,7 +119,4 @@ first publish year) is unverified because the upstream host is behind an anti-bo
    (`tox -r -e py313-cparity`, 46 seeds): Rust must never be worse than C, except where
    `ACCEPTED_WORSE` in `python/gaussfit_rs/tests/test_c_parity.py` names a documented exception.
    The gate fails if an exception is listed but no longer taken, so if an upstream change moves
-   that row back under the normal contract, delete the entry and its design-notes paragraph.
-   The bound-snap regression tests (`src/tests/gaussian.rs::bound_pinned_window_matches_c_reference`,
-   `python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall`)
-   now guard the upstream fix.
+   that row back under the normal contract, delete the entry and its design-notes section.

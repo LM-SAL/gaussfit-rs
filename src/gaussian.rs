@@ -213,8 +213,7 @@ pub fn fit_gaussian_bounded(
 
     // Chi/Par/Both/Dir are normal convergence; Ftol/Xtol/Gtol mean the solver
     // reached a rounding-limited minimum it cannot improve (still a usable fit).
-    // MaxIter (and NotDone) are treated as non-convergence, matching the old
-    // "ran out of iterations" -> FLAG_NO_CONVERGENCE behaviour.
+    // MaxIter (and NotDone) are non-convergence, reported as FLAG_NO_CONVERGENCE.
     let converged = matches!(
         status.success,
         MPSuccess::Chi
