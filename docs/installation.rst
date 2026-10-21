@@ -36,3 +36,23 @@ The wheels target baseline x86-64 so they run everywhere. On a machine with AVX2
 
 is 3-4 % faster per fit; see "Performance" in the design notes. It is a build-time choice, not a
 default, because such a build does not run on older CPUs.
+
+Development
+-----------
+
+.. code-block:: bash
+
+   pip install maturin
+   maturin develop --release --extras tests  # build into the active environment
+   cargo test                                # Rust unit tests
+   pytest --pyargs gaussfit_rs               # Python tests, including parity with the recorded C reference
+   prek run --all-files                      # lint hooks (ruff, docformatter, cargo fmt, clippy, cargo test)
+
+With the pinned C reference installed (``pip install ./third_party/c_reference``), the parity
+tests also run the C extension live over many generator seeds, and
+``python -m gaussfit_rs.tests.make_c_reference`` re-records the fixtures. ``tox -e py313-figure``
+runs the figure tests against the committed hash library.
+
+Releases: bump ``version`` in ``Cargo.toml`` (the only place it is set), merge, then tag
+``vX.Y.Z`` on ``main``; the workflow builds the wheels and the sdist and uploads them to PyPI.
+Release notes go on the `GitHub releases page <https://github.com/LM-SAL/gaussfit-rs/releases>`__.
