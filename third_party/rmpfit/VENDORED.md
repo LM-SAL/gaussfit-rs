@@ -88,8 +88,7 @@ Consumed as a path dependency, `rmpfit = { path = "third_party/rmpfit" }` in the
 excludes only `third_party/c_reference/**`, and CI installs from the sdist to prove it.
 Dependabot ignores path dependencies (and skips any crate named in a `[patch]` table, so that
 form buys nothing, and maturin leaves `[patch]` paths out of the sdist), so there is no
-automated notice of new rmpfit releases; check crates.io when touching dependencies. The
-scheduled poll deleted in commit f8cb42c can be restored from `f8cb42c^` if wanted.
+automated notice of new rmpfit releases; check crates.io when touching dependencies.
 
 The crate is not a workspace member, so `cargo fmt` and `cargo clippy` leave it alone.
 
