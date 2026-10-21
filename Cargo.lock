@@ -41,7 +41,7 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
 name = "gaussfit-rs"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "numpy",
  "pyo3",
@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "rmpfit"
-version = "2.0.0"
+version = "2.0.2"
 
 [[package]]
 name = "rustc-hash"

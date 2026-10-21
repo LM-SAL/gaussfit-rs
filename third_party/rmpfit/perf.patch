@@ -100,7 +100,7 @@
          let best_norm = self.fnorm.max(self.fnorm1);
          Ok(MPStatus {
              success: self.info,
-@@ -2168,51 +2188,77 @@
+@@ -2151,54 +2171,80 @@
  }
  
  impl ENorm for [f64] {
@@ -144,24 +144,28 @@
 -                let temp = xabs / x3max;
 -                s3 += temp * temp;
 -            }
--        }
++            plain &= ((xabs > MP_RDWARF) & (xabs < agiant)) | (xabs == 0.);
++            s2 += xabs * xabs;
+         }
 -        // calculation of norm.
 -        if s1 != 0.0 {
 -            x1max * (s1 + (s2 / x1max) / x1max).sqrt()
 -        } else if s2 != 0.0 {
 -            if s2 >= x3max {
 -                s2 * (1.0 + (x3max / s2) * (x3max * s3))
-+            plain &= ((xabs > MP_RDWARF) & (xabs < agiant)) | (xabs == 0.);
-+            s2 += xabs * xabs;
-+        }
+-            } else {
+-                x3max * ((s2 / x3max) + (x3max * s3))
+-            }
+-            .sqrt()
 +        if plain {
 +            s2.sqrt()
-+        } else {
+         } else {
+-            x3max * s3.sqrt()
 +            enorm_scaled(self)
-+        }
-+    }
-+}
-+
+         }
+     }
+ }
+ 
 +/// The three-sum MINPACK enorm, kept out of line as the rare path of
 +/// [`ENorm::enorm`] (gaussfit-rs local patch, see VENDORED.md).
 +#[inline(never)]
@@ -183,12 +187,10 @@
 +                let temp = x1max / xabs;
 +                s1 = 1.0 + s1 * temp * temp;
 +                x1max = xabs;
-             } else {
--                x3max * ((s2 / x3max) + (x3max * s3))
++            } else {
 +                let temp = xabs / x1max;
 +                s1 += temp * temp;
-             }
--            .sqrt()
++            }
 +        } else if xabs > x3max {
 +            // sum for small components.
 +            let temp = x3max / xabs;
@@ -205,17 +207,19 @@
 +    } else if s2 != 0.0 {
 +        if s2 >= x3max {
 +            s2 * (1.0 + (x3max / s2) * (x3max * s3))
-         } else {
--            x3max * s3.sqrt()
++        } else {
 +            x3max * ((s2 / x3max) + (x3max * s3))
-         }
++        }
 +        .sqrt()
 +    } else {
 +        x3max * s3.sqrt()
-     }
- }
- 
-@@ -2269,6 +2315,59 @@
++    }
++}
++
+ impl fmt::Display for MPError {
+     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+         write!(
+@@ -2252,6 +2298,59 @@
  
  #[cfg(test)]
  mod tests {

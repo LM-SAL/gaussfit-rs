@@ -1,49 +1,55 @@
 # Vendored: rmpfit
 
 This directory is a copy of the third-party crate [`rmpfit`](https://crates.io/crates/rmpfit),
-a pure-Rust port of the CMPFIT/MINPACK Levenberg-Marquardt solver, carrying four local patches
-(`bound-snap`, `lmpar-clamp`, `workspace`, `perf`). It backs the Gaussian fit in `src/gaussian.rs`.
+a pure-Rust port of the CMPFIT/MINPACK Levenberg-Marquardt solver, carrying two local patches
+(`workspace`, `perf`). It backs the Gaussian fit in `src/gaussian.rs`.
 
 | | |
 |---|---|
 | Crate | `rmpfit` |
-| Version | `2.0.0` |
+| Version | `2.0.2` |
 | Author | Vadim Dyadkin <dyadkin@3lp.cx> |
-| Upstream | https://git.3lp.cx/dyadkin/rmpfit, commit `ec9e172ffe2cd67baed17cfa2a94a2bd4b52e558` per the registry tarball |
+| Upstream | https://git.3lp.cx/dyadkin/rmpfit, commit `8c2616b30d2a28bccb518e0415224cbaccf4f67b` per the registry tarball |
 | crates.io | https://crates.io/crates/rmpfit |
-| crates.io tarball sha256 | `e3e8006f8d69fcd1b9cbbf7b74999549dfe44b504b8c4f80727ae40a2b856528` (from the previous `Cargo.lock`) |
+| crates.io tarball sha256 | `fcda5eda7607fcf213f250b86c71f20d140d726a0da9c1731cebb9e436194ef5` (crates.io index checksum) |
 | License | MIT (see `LICENSE`) |
-| Upstream `src/lib.rs` sha256 | `db6a83434cd18369e674cf26226c93a09a7cf5ba157bdd0efe32c8912490f431` |
-| Vendored `src/lib.rs` sha256 | `81a2c9b3bbff57e26d5ac8cdaced3734bbbb8efbcd1214deb92c494fc2b74d4e` |
-| Vendored on | 2026-09-10; `lmpar-clamp.patch` and `workspace.patch` added 2026-09-11; `perf.patch` added 2026-10-20 |
+| Upstream `src/lib.rs` sha256 | `039bfb8dd7f340853e455760043a444b640f4efd293b71f4f9d94389a482412c` |
+| Vendored `src/lib.rs` sha256 | `36c651ac809b0329448b08662ba5013e0d490bac745bf26ff7d0b0b6a353016b` |
+| Vendored on | 2026-09-10 (2.0.0); `perf.patch` added 2026-10-20; rebased onto 2.0.2 on 2026-10-21 |
 
 `Cargo.toml` and `README.md` are the published files, unchanged. The registry artifacts
 (`Cargo.toml.orig`, `Cargo.lock`, `.cargo-ok`, `.cargo_vcs_info.json`, `.gitignore`) are not
 copied; `Cargo.toml.orig` in particular breaks `maturin sdist`.
 
-## Why vendored, and why patched
+## Fixed upstream
 
-`src/lib.rs` is the upstream file plus four patches. `bound-snap.patch` is a single hunk in
-`MPFit::iterate`: MPFIT scales a step that would cross a parameter bound so it stops at the bound,
-then snaps coordinates within one ULP of a limit onto it. `x + alpha * step` can round a couple of
-ULP past the limit; the snap misses it, the parameter never counts as pegged, the next step's
-`alpha` collapses to ~1e-14 and the solver reports convergence with no progress. The patch records
-which bound set `alpha` and lands that coordinate exactly on its limit. CMPFIT has the same hazard.
-See "Bound-Limited Steps And The MPFIT Snap Hazard" in `docs/design-notes.rst` for the evidence
-(over 14,197 corpus windows: 18 fits change, all improvements, no stalls left).
+2.0.0 was vendored with two correctness patches that upstream merged in 2.0.2, so they are gone:
 
-`lmpar-clamp.patch` fixes a port deviation: upstream rmpfit clamps the trust-region radius with
-`self.par = self.par.max(paru)` where CMPFIT and MINPACK use `min` (in-repo C reference:
-`third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102`). Every other line of the `lmpar` sequence
-matches. With the fix, 68 of 82,368 corpus fits move onto the C reference's values and one low-SNR
-fit (`muse` seed 44, `low_snr`, absolute row 165) lands in a different local minimum, reduced
-chi-square 0.804337 vs C's 0.755257 (1.065x), so it is covered by a named row-level exception,
-`ACCEPTED_WORSE` in `python/gaussfit_rs/tests/test_c_parity.py`, rather than a wider tolerance. See
-"`lmpar` Trust-Region Clamp" in `docs/design-notes.rst`. The crate's own `gaussian` and
-`gauss_analytical` unit tests pin upstream's iteration count (27) and see 28 with the fix; they
-are not part of this repo's test run (`cargo test` covers the root crate only).
+- `bound-snap`: a bound-limited step `x + alpha * step` could round a couple of ULP past the
+  limit, miss MPFIT's one-ULP snap, and stall the fit with `alpha` ~1e-14. 2.0.2 records which
+  bound set `alpha` and lands that coordinate on its limit, as the local patch did (upstream
+  applies it after the snap loop rather than before; the result is the same). See
+  "Bound-Limited Steps And The MPFIT Snap Hazard" in `docs/design-notes.rst`.
+- `lmpar-clamp`: upstream 2.0.0 clamped the trust-region radius with `max(paru)` where
+  CMPFIT/MINPACK use `min`. See "`lmpar` Trust-Region Clamp" in `docs/design-notes.rst`; the
+  one row it moves into a worse local minimum than C is still `ACCEPTED_WORSE` in
+  `python/gaussfit_rs/tests/test_c_parity.py`, because 2.0.2 makes the same choice.
 
-`workspace.patch` is a performance patch with no numerical effect. Upstream allocates about 28
+2.0.2 also makes `check_limits` test `qllim`/`qulim` rather than the vector length, so an
+unbounded parameter sitting at 0 is no longer treated as pegged. `src/gaussian.rs` bounds every
+parameter on both sides, so this changes nothing here. Moving from 2.0.0 + four patches to
+2.0.2 + two left the outputs over the 92 parity corpora (38,083 rows) bit-identical.
+
+The crate's own `gaussian` test (numerical derivatives) expects 28 iterations in 2.0.2 and sees
+27 on macOS arm64, stock or patched; `gauss_analytical`, the path `src/gaussian.rs` uses,
+passes. The crate tests are not part of this repo's test run (`cargo test` covers the root
+crate only).
+
+## Why still vendored
+
+`src/lib.rs` is the upstream file plus two performance patches, neither with a numerical effect.
+
+`workspace.patch`: upstream allocates about 28
 `Vec`s per fit (the `MPFit` buffers, the parsed parameter tables, and one derivative column per
 analytical parameter on every Jacobian evaluation), which at the pipeline's 5-sample window was
 a fifth of the fit. The patch adds `MPWorkspace`, a reusable set of those buffers, and
@@ -79,10 +85,8 @@ file differs from upstream; check with
 cp -r third_party/rmpfit /tmp/rmpfit-check
 patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/perf.patch
 patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/workspace.patch
-patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/lmpar-clamp.patch
-patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/bound-snap.patch
 sha256sum /tmp/rmpfit-check/src/lib.rs
-# db6a83434cd18369e674cf26226c93a09a7cf5ba157bdd0efe32c8912490f431
+# 039bfb8dd7f340853e455760043a444b640f4efd293b71f4f9d94389a482412c
 ```
 
 ## Wiring
@@ -108,24 +112,22 @@ first publish year) is unverified because the upstream host is behind an anti-bo
 1. `cargo fetch` the new version or download the tarball from crates.io; copy `Cargo.toml`,
    `README.md` and `src/lib.rs` here (not the registry artifacts listed above).
 2. Apply the patches in order: `patch -p1 -d third_party/rmpfit < third_party/rmpfit/<name>.patch`
-   for `bound-snap`, `lmpar-clamp`, `workspace`, then `perf`. If upstream has fixed the snap, drop that
-   patch instead and delete the patch-site comments, its paragraph above and the design-notes
-   section; the regression tests decide:
-   `src/tests/gaussian.rs::bound_pinned_window_matches_c_reference` and
-   `python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall`.
-   If upstream gains a reusable workspace of its own, drop `workspace.patch` and point
-   `src/gaussian.rs` at the upstream entry point; the gate is `benchmarks/throughput.py`.
+   for `workspace`, then `perf`. If upstream gains a reusable workspace of its own, drop
+   `workspace.patch` and point `src/gaussian.rs` at the upstream entry point; if it takes any
+   part of `perf.patch`, drop that hunk. The gate for both is `benchmarks/throughput.py` plus
+   the byte comparison under "Performance" in `docs/design-notes.rst`. Once neither patch is
+   left, replace the path dependency with `rmpfit = "=<version>"` and delete this directory.
 3. Update the version, checksums and date in this file, then regenerate each patch against its own
-   base — not all against upstream. `bound-snap.patch` is
-   `diff -u --label a/src/lib.rs --label b/src/lib.rs <upstream lib.rs> <upstream + snap>`,
-   `lmpar-clamp.patch` is the same command from that intermediate file to the next
-   (`+ lmpar`), `workspace.patch` from that one to the next (`+ workspace`), and `perf.patch`
-   from that one to `src/lib.rs`. Regenerating them from
-   upstream in one go would fold earlier hunks into later patches and break the reverse check
-   above.
+   base — not both against upstream. `workspace.patch` is
+   `diff -u --label a/src/lib.rs --label b/src/lib.rs <upstream lib.rs> <upstream + workspace>`
+   and `perf.patch` is the same command from that intermediate file to `src/lib.rs`.
+   Regenerating them from upstream in one go would fold `workspace` hunks into `perf.patch` and
+   break the reverse check above.
 4. `cargo test`, then the live parity test with the C reference installed
    (`tox -r -e py313-cparity`, 46 seeds): Rust must never be worse than C, except where
    `ACCEPTED_WORSE` in `python/gaussfit_rs/tests/test_c_parity.py` names a documented exception.
-   Upstream releases that fix `bound-snap` or `lmpar` mean the matching patch can be dropped;
-   when `lmpar` is fixed upstream, also delete `ACCEPTED_WORSE` and the design-notes entry — the
-   gate fails if an exception is listed but no longer taken, so it cannot linger.
+   The gate fails if an exception is listed but no longer taken, so if an upstream change moves
+   that row back under the normal contract, delete the entry and its design-notes paragraph.
+   The bound-snap regression tests (`src/tests/gaussian.rs::bound_pinned_window_matches_c_reference`,
+   `python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall`)
+   now guard the upstream fix.
