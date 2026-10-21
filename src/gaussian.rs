@@ -124,8 +124,8 @@ impl MPFitter for GaussianProblem<'_> {
 /// The fit is delegated to [`rmpfit`], a pure-Rust port of the CMPFIT/MINPACK
 /// `mpfit` routine, so the convergence semantics match the original C
 /// extension. The vendored copy in `third_party/rmpfit` carries local
-/// patches (a bound-snap fix, the MINPACK `lmpar` clamp, and a reusable
-/// per-thread workspace so a fit allocates nothing); see
+/// performance patches (a reusable per-thread workspace so a fit allocates
+/// nothing, and solver bookkeeping trims); see
 /// `third_party/rmpfit/VENDORED.md`. Parameter errors use the full
 /// three-parameter Hessian, including parameters at their bounds, matching
 /// the C SciPy-style covariance calculation.
@@ -213,8 +213,7 @@ pub fn fit_gaussian_bounded(
 
     // Chi/Par/Both/Dir are normal convergence; Ftol/Xtol/Gtol mean the solver
     // reached a rounding-limited minimum it cannot improve (still a usable fit).
-    // MaxIter (and NotDone) are treated as non-convergence, matching the old
-    // "ran out of iterations" -> FLAG_NO_CONVERGENCE behaviour.
+    // MaxIter (and NotDone) are non-convergence, reported as FLAG_NO_CONVERGENCE.
     let converged = matches!(
         status.success,
         MPSuccess::Chi

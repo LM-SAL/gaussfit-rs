@@ -53,12 +53,12 @@ fn rejects_non_positive_sigma_lower_bound() {
 
 #[test]
 fn bound_pinned_window_matches_c_reference() {
-    // Regression guard for the MPFIT bound-snap stall fixed in
-    // third_party/rmpfit (VENDORED.md): a bound-limited step landed sigma two
-    // ULP above width_min, alpha then collapsed to ~1e-14 and stock rmpfit
-    // reported `Par` after 4 iterations at reduced chi-square 56.66. Expected
-    // values are MUSE's float32 C extension output for this corpus window
-    // (parameter set "wide", seed 1, row 314), normalised by the peak.
+    // Guards MPFIT's bound-limited step (third_party/rmpfit/VENDORED.md): if
+    // the step leaves sigma a couple of ULP above width_min instead of on it,
+    // alpha collapses to ~1e-14 and the solver reports `Par` after 4
+    // iterations at reduced chi-square 56.66. Expected values are MUSE's
+    // float32 C extension output for this corpus window (parameter set
+    // "wide", seed 1, row 314), normalised by the peak.
     let x = [
         -238.98305, -228.81355, -218.64407, -208.47458, -198.30508, -188.13559, -177.9661,
         -167.79662, -157.62712, -147.45763, -137.28813,

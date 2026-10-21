@@ -181,7 +181,7 @@ fn rejects_peak_inside_slack_zone() {
 #[test]
 fn skips_masked_noise_pixel_instead_of_failing() {
     // A single non-finite noise sample inside the window must be dropped, not
-    // abort the whole fit (previously yielded FLAG_NO_CONVERGENCE).
+    // abort the whole fit.
     let v = velocity_grid(60, -300.0, 600.0 / 59.0);
     let spectrum = gaussian_spectrum(&v, 1.0, 0.0, SIGMA_TRUE);
     let mut noise = vec![0.01; v.len()];

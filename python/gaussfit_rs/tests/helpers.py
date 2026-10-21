@@ -82,9 +82,8 @@ def assert_fit_parity(
         chi_close = np.abs(r[:, 6] - c[:, 6]) <= RTOL * c[:, 6] + CHI_ATOL
         close = (np.abs(r[:, :3] - c[:, :3]) <= RTOL * scale).all(axis=1) & chi_close
         chi_worse = r[:, 6] > c[:, 6] * (1 + RTOL) + CHI_ATOL
-        # Documented exceptions (see the docstring and docs/design-notes.rst): the local lmpar fix
-        # makes one specific low-SNR row land in a slightly worse local minimum than C. Only the
-        # named rows are exempt, and only up to the recorded ratio cap.
+        # Documented exceptions (see the docstring and docs/design-notes.rst): only the named rows
+        # are exempt, and only up to the recorded ratio cap.
         accepted = np.zeros(len(r), dtype=bool)
         exception = (accepted_worse or {}).get(label)
         if exception is not None:

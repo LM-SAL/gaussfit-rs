@@ -8,7 +8,6 @@ that pin the behavior, so a change to either is a change to the decision.
 Peak Detection And Velocity-Window Semantics
 --------------------------------------------
 
-- **Status:** resolved 2026-05-29 to preserve the original C extension behavior.
 - **Owner:** Nabil Freij.
 - **Code:** ``src/spectrum.rs::fit_single_spectrum_core`` (peak-detection block).
 - **Tests:** ``src/tests/spectrum.rs::rejects_peak_inside_slack_zone``,
@@ -29,63 +28,30 @@ semantics matter more than a better selection rule. If that changes, add an expl
 signal-presence criterion (a minimum peak signal-to-noise or absolute threshold) rather than
 overloading ``npix_slack``.
 
-Bound-Limited Steps And The MPFIT Snap Hazard
----------------------------------------------
+Accepted C-Parity Exception
+---------------------------
 
-- **Status:** resolved 2026-09-10 by patching the vendored solver.
 - **Owner:** Nabil Freij.
-- **Code:** ``third_party/rmpfit/bound-snap.patch`` (``MPFit::iterate``), documented in
-  ``third_party/rmpfit/VENDORED.md``; consumed by ``src/gaussian.rs::fit_gaussian_bounded``.
-- **Tests:** ``src/tests/gaussian.rs::bound_pinned_window_matches_c_reference``,
-  ``python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall``,
-  ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension`` (46 seeds, needs
-  the C reference).
-
-MPFIT scales a step that would cross a parameter bound by ``alpha = (limit - x) / step`` and
-snaps coordinates within one ULP of a limit onto it. ``x + alpha * step`` can land a couple of
-ULP past the limit on either side. Just inside, the parameter is pegged and the fit continues.
-Just outside, it is not snapped: the next step crosses the bound again, ``alpha`` collapses to
-about 1e-14 for every parameter, the trust region with it, and the solver reports ``Par`` (or
-``Both``) with no progress, so ``FLAG_SUCCESS`` arrives with a reduced chi-square up to 74x the
-C reference's. Rounding order decides the side, so each build stalls on its own subset of fits.
-CMPFIT 1.5 and rmpfit 2.0.0 share this code line for line.
-
-The vendored rmpfit records which bound set ``alpha`` and places that coordinate exactly on its
-limit. Over 14,197 corpus windows 18 fits change, every one an improvement, and Rust is never
-worse than C except for the one ``lmpar`` exception below.
-
-**Tradeoff.** The parity contract in ``helpers.assert_fit_parity`` is one-sided: Rust may beat
-C and does on these windows. Do not "repair" the corpus or widen the tolerance to make those
-rows agree. The patch rides on a path dependency, which Dependabot ignores (as it does crates
-named in a ``[patch]`` table), so new rmpfit releases are checked by hand; ``VENDORED.md`` has
-the procedure and the tests above decide when the patch can be dropped.
-
-``lmpar`` Trust-Region Clamp
-----------------------------
-
-- **Status:** resolved 2026-09-11 by patching the vendored solver.
-- **Owner:** Nabil Freij.
-- **Code:** ``third_party/rmpfit/lmpar-clamp.patch``, documented in ``VENDORED.md``.
+- **Code:** ``ACCEPTED_WORSE`` in ``python/gaussfit_rs/tests/test_c_parity.py``, the
+  ``accepted_worse`` argument of ``python/gaussfit_rs/tests/helpers.py::assert_fit_parity``.
 - **Tests:** ``python/gaussfit_rs/tests/test_c_parity.py::test_matches_live_c_extension``
-  (``muse`` seed 44, family ``low_snr``, carries the named exception).
+  (``muse`` seed 44, family ``low_snr``; needs the C reference).
 
-Upstream rmpfit 2.0.0 clamps the Levenberg-Marquardt damping parameter with
-``self.par = self.par.max(paru)`` where CMPFIT and MINPACK use ``min``
-(``third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102``); the vendored copy uses ``min``.
-Over 100 corpus seeds (82,368 fits) 68 fits move onto the C reference's values within tolerance
-and one low-SNR fit (``muse`` seed 44, row 165) lands in a different local minimum, reduced
-chi-square 0.804 against C's 0.755 (1.065x).
+The parity contract in ``helpers.assert_fit_parity`` is one-sided: Rust may beat C, never be
+worse. One row breaks it. rmpfit clamps the Levenberg-Marquardt parameter with ``min`` as
+CMPFIT and MINPACK do (``third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102``), and on
+``muse`` seed 44, row 165 it settles in a different local minimum than the float32 C
+extension: reduced chi-square 0.804 against C's 0.755 (1.065x).
 
-**Tradeoff.** That row is a named exception, ``ACCEPTED_WORSE`` in ``test_c_parity.py``, capped
-at 1.10x, restricted to that row and asserted to be taken exactly once, rather than a wider
-tolerance, so the one-sided contract stays meaningful everywhere else. If upstream fixes
-``lmpar``, drop the patch after checking parity, but keep the exception until the row passes
-the normal gate.
+**Tradeoff.** The row is a named exception, capped at 1.10x, restricted to that row and
+asserted to be taken exactly once, rather than a wider tolerance, so the contract stays
+meaningful for every other row. Where Rust beats C, do not "repair" the corpus or widen the
+tolerance to make the rows agree. Once the row passes the normal gate the stale check fails;
+delete the entry and this section then.
 
 Unconstrained-Fit Indicator
 ---------------------------
 
-- **Status:** resolved 2026-09-11; reported for every fit in the ninth result column.
 - **Owner:** Nabil Freij.
 - **Code:** ``src/spectrum.rs::fit_single_spectrum_core`` (the predicate), ``src/api.rs`` (the
   ninth column of every result row), ``python/gaussfit_rs/fitting.py`` (the public wrappers).
@@ -131,8 +97,6 @@ caller's intensity masks first and evaluate any quality policy on the fits that 
 Performance
 -----------
 
-- **Status:** measured 2026-10-20 on a Ryzen 9 9950X; per-fit allocation removed, solver
-  bookkeeping trimmed, the remainder attributed by instruction.
 - **Owner:** Nabil Freij.
 - **Code:** ``third_party/rmpfit/workspace.patch`` (``MPWorkspace``, ``mpfit_with_workspace``)
   and ``third_party/rmpfit/perf.patch`` (``enorm`` fast path, ``fdjac2`` fills, finite check,
@@ -144,7 +108,7 @@ Performance
   (``taskset -c N cargo test --release bench_fit_window -- --ignored --nocapture``); under
   ``perf stat -e cycles:u,instructions:u`` with a ``BENCH_ROUNDS=0`` run subtracted it gives
   counts per fit. Judge changes by those counts: wall-clock A/B of identical binaries varies
-  2-8 % on this machine even pinned and interleaved.
+  2-8 % on the Ryzen 9 9950X these numbers come from, even pinned and interleaved.
 - **Gate for any change:** outputs over the 92 ``build_cases`` corpora (46 seeds x muse/wide)
   compared as raw bytes before and after. Every patch above is bit-identical.
 
@@ -181,15 +145,11 @@ Where the instructions go (callgrind, 5-sample window): about 23 % are slice bou
 ``parse_params``, ``init_lm``) 5 %; ``qrfac`` 4 %, ``lmpar`` 3 %, ``transpose`` 2 %; the peak
 search and window copy under 2 %. No single loop dominates.
 
-What the patches bought: the workspace removed about 28 heap allocations per fit, 0.24 us (the
-intercept went from 1.78 to 1.43 us). ``perf.patch`` cut cycles per fit by 7 % at 5 samples, 6 %
-at 9 and 4 % at 21 with the instruction count unchanged, by inlining ``enorm`` and removing the
-data-dependent branches from its loop (its three-sum form reduces exactly to the plain sum of
-squares when no component is tiny or huge) and by dropping fills and a covariance pass whose
-results were never read. Against MUSE's ``fastfit2`` C++ batcher (the same cmpfit, measured
-before that reference was dropped from the repo) Rust was level with an ``-O3`` build
-single-threaded, 15-20 % slower than the extension built with Python's default ``CFLAGS``, and
-faster at 32 threads.
+What the patches are worth: the workspace saves about 28 heap allocations per fit, 0.24 us.
+``perf.patch`` saves 7 % of cycles per fit at 5 samples, 6 % at 9 and 4 % at 21 with the
+instruction count unchanged, by inlining ``enorm`` and removing the data-dependent branches from
+its loop (its three-sum form reduces exactly to the plain sum of squares when no component is
+tiny or huge) and by skipping fills and a covariance pass whose results are never read.
 
 Measured And Rejected
 ~~~~~~~~~~~~~~~~~~~~~
@@ -208,8 +168,8 @@ All bit-identical in output; recorded so they are not tried twice.
 
 The remaining lever is the 23 % in bounds checks and header reloads, which needs the hot loops
 of ``qrfac``, ``transpose``, ``lmpar`` and ``iterate`` rewritten over iterators or split slices.
-The solver is under 1 % of a pipeline run; the end-to-end lever was per-slit staging on the
-caller's side, which the ``slit_index`` argument of ``fit_spectra_batch`` removes.
+The solver is under 1 % of a pipeline run; staging spectra slit by slit on the caller's side
+costs more than the fit, and the ``slit_index`` argument of ``fit_spectra_batch`` avoids it.
 
 Threads And NumPy's BLAS Pool
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
