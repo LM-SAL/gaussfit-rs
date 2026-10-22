@@ -99,7 +99,7 @@ Performance
 
 - **Owner:** Nabil Freij.
 - **Code:** ``third_party/rmpfit/workspace.patch`` (``MPWorkspace``, ``mpfit_with_workspace``)
-  and ``third_party/rmpfit/perf.patch`` (``enorm`` fast path, ``fdjac2`` fills, finite check,
+  and ``third_party/rmpfit/perf.patch`` (``enorm`` fast path, ``fdjac2`` fills,
   ``MPConfig::no_covar``), the per-thread workspace in ``src/gaussian.rs``, the per-thread
   window buffers in ``src/spectrum.rs``.
 - **Harness:** ``benchmarks/throughput.py`` times the public batch path (``--npix`` sweeps the

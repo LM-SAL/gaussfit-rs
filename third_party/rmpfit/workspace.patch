@@ -392,16 +392,7 @@
          Ok(())
      }
  
-@@ -1068,7 +1239,7 @@
-     /// has been reduced to a (small) square matrix, and the test is O(N^2).
-     fn check_is_finite(&self) -> bool {
-         if !self.cfg.no_finite_check {
--            for val in &self.fjac {
-+            for val in self.fjac.iter() {
-                 if !val.is_finite() {
-                     return false;
-                 }
-@@ -1115,23 +1286,11 @@
+@@ -1118,23 +1289,11 @@
                      || (p.limited_up && p.limit_up == self.xall[*i])
              })
              .count();
@@ -429,7 +420,7 @@
          let best_norm = self.fnorm.max(self.fnorm1);
          Ok(MPStatus {
              success: self.info,
-@@ -1143,9 +1302,9 @@
+@@ -1146,9 +1305,9 @@
              n_free: self.nfree,
              n_pegged,
              n_func: self.m,
@@ -442,7 +433,7 @@
          })
      }
  
-@@ -1210,7 +1369,7 @@
+@@ -1213,7 +1372,7 @@
      //
      //    argonne national laboratory. minpack project. august 1980.
      //    burton s. garbow, kenneth e. hillstrom, jorge j. more

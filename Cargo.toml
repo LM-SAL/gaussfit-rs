@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 numpy = "0.30"
 pyo3 = { version = "0.30", features = ["extension-module"] }
 rayon = "1"
-# rmpfit 2.0.2 plus two local performance patches; see third_party/rmpfit/VENDORED.md.
+# rmpfit 2.0.3 plus two local performance patches; see third_party/rmpfit/VENDORED.md.
 rmpfit = { path = "third_party/rmpfit" }
 
 [profile.release]
