@@ -7,15 +7,15 @@ a pure-Rust port of the CMPFIT/MINPACK Levenberg-Marquardt solver, carrying two 
 | | |
 |---|---|
 | Crate | `rmpfit` |
-| Version | `2.0.2` |
+| Version | `2.0.3` |
 | Author | Vadim Dyadkin <dyadkin@3lp.cx> |
-| Upstream | https://git.3lp.cx/dyadkin/rmpfit, commit `8c2616b30d2a28bccb518e0415224cbaccf4f67b` per the registry tarball |
+| Upstream | https://git.3lp.cx/dyadkin/rmpfit, commit `e8a810bd9ba5f30ac251f903ee0e1ddf72413d2c` per the registry tarball |
 | crates.io | https://crates.io/crates/rmpfit |
-| crates.io tarball sha256 | `fcda5eda7607fcf213f250b86c71f20d140d726a0da9c1731cebb9e436194ef5` (crates.io index checksum) |
+| crates.io tarball sha256 | `61612e393bf9916f7cd6c7f91d45986f3613bedb67b2b5064b09d4399e9a9775` (crates.io index checksum) |
 | License | MIT (see `LICENSE`) |
-| Upstream `src/lib.rs` sha256 | `039bfb8dd7f340853e455760043a444b640f4efd293b71f4f9d94389a482412c` |
-| Vendored `src/lib.rs` sha256 | `36c651ac809b0329448b08662ba5013e0d490bac745bf26ff7d0b0b6a353016b` |
-| Vendored on | 2026-10-21 |
+| Upstream `src/lib.rs` sha256 | `2bb95e44e8afa4751c0dafcf79cdfbda1b47594a52b5f47ef56099458863c12f` |
+| Vendored `src/lib.rs` sha256 | `45eae578eff147c134f8e1a84075f26617b6889adf3a2a4cebb1af61ab52c418` |
+| Vendored on | 2026-10-22 |
 
 `Cargo.toml` and `README.md` are the published files, unchanged. The registry artifacts
 (`Cargo.toml.orig`, `Cargo.lock`, `.cargo-ok`, `.cargo_vcs_info.json`, `.gitignore`) are not
@@ -33,9 +33,14 @@ which is where the one row named in "Accepted C-Parity Exception" in `docs/desig
 comes from. `src/gaussian.rs` bounds every parameter on both sides, so upstream's handling of
 unbounded parameters in `check_limits` does not apply.
 
-The crate's own `gaussian` test (numerical derivatives) expects 28 iterations and sees 27 on
-macOS arm64; `gauss_analytical`, the path `src/gaussian.rs` uses, passes. The crate tests are
-not part of this repo's test run (`cargo test` covers the root crate only).
+The crate's own `gaussian` test (numerical derivatives) fails on macOS arm64, upstream as well:
+`init[0]` lands at 0.48044143 against an expected 0.48044336 at a 1e-6 tolerance (2.0.3 dropped
+the iteration-count asserts that failed there first). Apple's `exp` and glibc's round two
+near-halfway inputs of the fit 1 ULP apart, the forward-difference Jacobian amplifies that, and
+the fit stops one iteration earlier at a point equally inside `ftol`: both answers are within
+1.2e-6 of the true minimum, so the test's tolerance, not the solver, is at fault.
+`gauss_analytical`, the path `src/gaussian.rs` uses, passes. The crate tests are not part of
+this repo's test run (`cargo test` covers the root crate only).
 
 ## Why still vendored
 
@@ -55,18 +60,15 @@ under "Performance" in `docs/design-notes.rst`.
 
 `perf.patch` is a second performance patch, again with no numerical effect: the Rust outputs over
 the same 92-corpus parity set (and two 20,000-spectrum benchmark batches) are bit-identical before
-and after. It makes four changes. The MINPACK `enorm` takes a branch-free fast path, the plain
+and after. It makes three changes. The MINPACK `enorm` takes a branch-free fast path, the plain
 sequential sum of squares, which is exactly what its three-sum algorithm reduces to when no
 component is tiny or huge; the original is kept as `enorm_scaled` for the rest, and
 `tests::enorm_fast_path_is_bit_identical_to_the_scaled_sum` pins the equivalence
 (`cargo test --manifest-path third_party/rmpfit/Cargo.toml enorm_fast_path`). `fdjac2` no longer
 zeroes `fjac` and the analytical derivative columns, since every element is overwritten before it
-is read (a user `jacobian` must therefore fill every element of each column). The finite check
-after the QR factorisation covers the `nfree x nfree` block as CMPFIT does, where upstream walked
-all `m x nfree`; a non-finite Householder component makes that column's norm, and so its diagonal
-element of R, non-finite, so nothing is missed. And `MPConfig::no_covar` lets a caller that
-derives its own errors (as `src/gaussian.rs` does) skip the covariance pass at the end of the
-fit. Measured together, these cut the cycles per fit by 6 % at a 5-sample window and 3 % at 21
+is read (a user `jacobian` must therefore fill every element of each column). And
+`MPConfig::no_covar` lets a caller that derives its own errors (as `src/gaussian.rs` does) skip
+the covariance pass at the end of the fit. Measured together, these cut the cycles per fit by 6 % at a 5-sample window and 3 % at 21
 samples with the instruction count unchanged; numbers and the two rejected variants under
 "Performance" in `docs/design-notes.rst`.
 
@@ -78,7 +80,7 @@ cp -r third_party/rmpfit /tmp/rmpfit-check
 patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/perf.patch
 patch -R -p1 -d /tmp/rmpfit-check < third_party/rmpfit/workspace.patch
 sha256sum /tmp/rmpfit-check/src/lib.rs
-# 039bfb8dd7f340853e455760043a444b640f4efd293b71f4f9d94389a482412c
+# 2bb95e44e8afa4751c0dafcf79cdfbda1b47594a52b5f47ef56099458863c12f
 ```
 
 ## Wiring

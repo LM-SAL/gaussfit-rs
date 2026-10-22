@@ -1,8 +1,8 @@
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -244,6 +244,12 @@
-     /// true = perform check;
-     /// false = do not perform check (Default: false)
+     /// true = do not perform check;
+     /// false = perform check (Default: false)
      pub no_finite_check: bool,
 +    /// Skip the covariance calculation at the end of the fit?
 +    /// true = skip it, leaving [`MPStatus::covar`] and [`MPStatus::xerror`]
@@ -70,23 +70,7 @@
              self.f.jacobian(&self.xnew, &mut self.wa4, &mut self.derivs)?;
              self.nfev += 1;
              for j in 0..self.nfree {
-@@ -1238,9 +1251,13 @@
-     /// Check for overflow.  This should be a cheap test here since FJAC
-     /// has been reduced to a (small) square matrix, and the test is O(N^2).
-     fn check_is_finite(&self) -> bool {
-+        // gaussfit-rs local patch (see VENDORED.md): test the nfree x nfree
-+        // block only, as CMPFIT does (upstream walked all m x nfree). A
-+        // non-finite Householder component makes that column's norm, and so
-+        // its diagonal element of R, non-finite, so nothing is missed.
-         if !self.cfg.no_finite_check {
--            for val in self.fjac.iter() {
--                if !val.is_finite() {
-+            for col in self.fjac.chunks_exact(self.m).take(self.nfree) {
-+                if col[..self.nfree].iter().any(|val| !val.is_finite()) {
-                     return false;
-                 }
-             }
-@@ -1289,8 +1306,11 @@
+@@ -1292,8 +1305,11 @@
          /* Compute the covariance matrix; it stays in fjac (see MPWorkspace).
           * gaussfit-rs local patch (see VENDORED.md): the per-parameter copies
           * upstream built here are made by MPFitter::mpfit instead, so this
@@ -100,7 +84,7 @@
          let best_norm = self.fnorm.max(self.fnorm1);
          Ok(MPStatus {
              success: self.info,
-@@ -2151,54 +2171,80 @@
+@@ -2154,54 +2170,80 @@
  }
  
  impl ENorm for [f64] {
@@ -219,7 +203,7 @@
  impl fmt::Display for MPError {
      fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
          write!(
-@@ -2252,6 +2298,59 @@
+@@ -2255,6 +2297,59 @@
  
  #[cfg(test)]
  mod tests {
