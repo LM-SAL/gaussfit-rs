@@ -189,7 +189,8 @@ def fit_spectra_batch(
         1-sigma noise per pixel (same units as *spectra*), shape ``(N, M)``.
     guide_velocities:
         Expected line-centre velocity [km/s] per row, shape ``(N,)``, or one scalar for all rows.
-        A non-finite guide matches no pixel, so that row returns :data:`FLAG_NO_LOCAL_MAX`.
+        A non-finite guide matches no pixel, so that row returns
+        :data:`~gaussfit_rs.fitting.FLAG_NO_LOCAL_MAX`.
     velocity_range:
         Half-width of the peak search window around the guide [km/s].
     npix:
@@ -222,15 +223,17 @@ def fit_spectra_batch(
 
     Returns
     -------
-    fit_results : ndarray, shape (N, 9), float32
-        One row per spectrum; see the module docstring for the columns. Column 8 holds the
-        quality bits (:data:`QUALITY_UNCONSTRAINED`, :data:`QUALITY_ZERO_ERROR`,
-        :data:`QUALITY_PEGGED`), 0 when none apply and for failed fits.
-    indices : ndarray, shape (N, 2), int32
-        ``(i_left, i_right)`` of the fitting window per row, half-open, ``(0, 0)`` when no peak
-        was found.
-    counts : ndarray, shape (N, 2), int32
-        Only with ``meta=True``: ``[n_iter, n_fev]`` per row.
+    fit_results : numpy.ndarray
+        Shape ``(N, 9)``, float32: one row per spectrum; see the module docstring for the
+        columns. Column 8 holds the quality bits
+        (:data:`~gaussfit_rs.fitting.QUALITY_UNCONSTRAINED`,
+        :data:`~gaussfit_rs.fitting.QUALITY_ZERO_ERROR`,
+        :data:`~gaussfit_rs.fitting.QUALITY_PEGGED`), 0 when none apply and for failed fits.
+    indices : numpy.ndarray
+        Shape ``(N, 2)``, int32: ``(i_left, i_right)`` of the fitting window per row, half-open,
+        ``(0, 0)`` when no peak was found.
+    counts : numpy.ndarray
+        Shape ``(N, 2)``, int32, only with ``meta=True``: ``[n_iter, n_fev]`` per row.
     """
     spectra = np.ascontiguousarray(spectra, dtype=np.float32)
     if spectra.ndim != _SPECTRA_NDIM:
@@ -324,10 +327,12 @@ def fit_gaussian(
 
     Returns
     -------
-    ndarray, shape (8,), float32
+    numpy.ndarray
+        Shape ``(8,)``, float32:
         ``[amplitude, mean, sigma, amplitude_err, mean_err, sigma_err, reduced_chi2, flag]``;
-        *flag* is :data:`FLAG_SUCCESS` or :data:`FLAG_NO_CONVERGENCE`, and everything else is NaN
-        when it is not success. With ``meta=True`` a second value holds ``[n_iter, n_fev]``.
+        *flag* is :data:`~gaussfit_rs.fitting.FLAG_SUCCESS` or
+        :data:`~gaussfit_rs.fitting.FLAG_NO_CONVERGENCE`, and everything else is NaN when it is
+        not success. With ``meta=True`` a second value holds ``[n_iter, n_fev]``.
     """
     row = _fit_gaussian(
         np.ascontiguousarray(x, dtype=np.float32),

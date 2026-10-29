@@ -53,6 +53,7 @@ tests also run the C extension live over many generator seeds, and
 ``python -m gaussfit_rs.tests.make_c_reference`` re-records the fixtures. ``tox -e py313-figure``
 runs the figure tests against the committed hash library.
 
-Releases: bump ``version`` in ``Cargo.toml`` (the only place it is set), merge, then tag
-``vX.Y.Z`` on ``main``; the workflow builds the wheels and the sdist and uploads them to PyPI.
-Release notes go on the `GitHub releases page <https://github.com/LM-SAL/gaussfit-rs/releases>`__.
+Releases: bump ``version`` in ``Cargo.toml`` (the only place it is set) and run
+``towncrier build --version X.Y.Z``, which moves the fragments in ``changelog/`` into
+``CHANGELOG.rst``; merge, then tag ``vX.Y.Z`` on ``main``; the workflow builds the wheels and the
+sdist and uploads them to PyPI.
