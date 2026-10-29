@@ -37,5 +37,8 @@ intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable", None),
 }
+# Copy code without the doctest prompts.
+copybutton_prompt_text = r">>> |\.\.\. "
+copybutton_prompt_is_regexp = True
 html_theme = "furo"
 html_title = "gaussfit-rs"

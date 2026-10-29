@@ -10,32 +10,33 @@ Levenberg-Marquardt Gaussian fit on the surrounding pixel window.
 
 .. code-block:: python
 
-   import numpy as np
-   from gaussfit_rs import fit_single_spectrum, FitResult
+   >>> import numpy as np
+   >>> from gaussfit_rs import fit_single_spectrum, FitResult
 
-   velocity_grid = np.linspace(-300, 300, 60, dtype=np.float32)  # km/s
-   spectrum = np.exp(-0.5 * (velocity_grid / 30.0) ** 2).astype(np.float32)
-   noise = np.full_like(spectrum, 0.05)
+   >>> velocity_grid = np.linspace(-300, 300, 60, dtype=np.float32)  # km/s
+   >>> spectrum = np.exp(-0.5 * (velocity_grid / 30.0) ** 2).astype(np.float32)
+   >>> noise = np.full_like(spectrum, 0.05)
 
-   result_arr, (i_left, i_right) = fit_single_spectrum(
-       spectrum=spectrum,
-       dopp_slit=velocity_grid,
-       spec_noise=noise,
-       guide_velocity=0.0,
-       velocity_range=200.0,
-       npix=10,
-       npix_slack=2,
-       dv=float(np.median(np.gradient(velocity_grid))),  # km/s per pixel
-       width_min=5.0,
-       width_max=100.0,
-       width_guess=30.0,
-       amplitude_rel_min=0.1,
-       amplitude_rel_max=2.0,
-   )
+   >>> result_arr, (i_left, i_right) = fit_single_spectrum(
+   ...     spectrum=spectrum,
+   ...     dopp_slit=velocity_grid,
+   ...     spec_noise=noise,
+   ...     guide_velocity=0.0,
+   ...     velocity_range=200.0,
+   ...     npix=10,
+   ...     npix_slack=2,
+   ...     dv=float(np.median(np.gradient(velocity_grid))),  # km/s per pixel
+   ...     width_min=5.0,
+   ...     width_max=100.0,
+   ...     width_guess=30.0,
+   ...     amplitude_rel_min=0.1,
+   ...     amplitude_rel_max=2.0,
+   ... )
 
-   r = FitResult.from_array(result_arr)
-   if r.converged:
-       print(f"velocity = {r.velocity:.1f} ± {r.velocity_err:.1f} km/s")
+   >>> r = FitResult.from_array(result_arr)
+   >>> if r.converged:
+   ...     print(f"velocity = {r.velocity:.1f} ± {r.velocity_err:.1f} km/s")
+   velocity = 0.0 ± 0.0 km/s
 
 Batch fitting (IFU data)
 ------------------------
@@ -47,26 +48,28 @@ per row or a scalar for all rows.
 
 .. code-block:: python
 
-   from gaussfit_rs import FLAG_SUCCESS, fit_spectra_batch
+   >>> from gaussfit_rs import FLAG_SUCCESS, fit_spectra_batch
 
-   fits, indices = fit_spectra_batch(
-       spectra=spectra_2d,       # (N, M) float32, C-contiguous
-       dopp_slit=velocity_grid,  # (M,) float32
-       spec_noise=noise_2d,      # (N, M) float32, C-contiguous
-       guide_velocities=0.0,
-       velocity_range=200.0,
-       npix=10,
-       npix_slack=2,
-       dv=float(np.median(np.gradient(velocity_grid))),
-       width_min=5.0,
-       width_max=100.0,
-       width_guess=30.0,
-       amplitude_rel_min=0.1,
-       amplitude_rel_max=2.0,
-   )
+   >>> spectra_2d = np.tile(spectrum, (4, 1))
+   >>> noise_2d = np.tile(noise, (4, 1))
+   >>> fits, indices = fit_spectra_batch(
+   ...     spectra=spectra_2d,       # (N, M) float32, C-contiguous
+   ...     dopp_slit=velocity_grid,  # (M,) float32
+   ...     spec_noise=noise_2d,      # (N, M) float32, C-contiguous
+   ...     guide_velocities=0.0,
+   ...     velocity_range=200.0,
+   ...     npix=10,
+   ...     npix_slack=2,
+   ...     dv=float(np.median(np.gradient(velocity_grid))),
+   ...     width_min=5.0,
+   ...     width_max=100.0,
+   ...     width_guess=30.0,
+   ...     amplitude_rel_min=0.1,
+   ...     amplitude_rel_max=2.0,
+   ... )
 
-   converged = fits[:, 7] == FLAG_SUCCESS
-   velocities = fits[converged, 1]  # km/s
+   >>> converged = fits[:, 7] == FLAG_SUCCESS
+   >>> velocities = fits[converged, 1]  # km/s
 
 When the velocity grid differs per slit, pass the grids as one ``(n_slit, M)`` table and
 ``slit_index``, an ``int32`` array naming the grid row of each spectrum. A block with a slit axis
@@ -74,13 +77,25 @@ is then fitted in one call from a reshaped view, with no per-slit copies:
 
 .. code-block:: python
 
-   rows = flux.reshape(-1, n_wave)                     # view
-   slit_index = np.indices(flux.shape[:-1])[slit_axis].ravel()
-   fits, indices = fit_spectra_batch(
-       spectra=rows, dopp_slit=grids, spec_noise=noise.reshape(-1, n_wave),
-       guide_velocities=guides.ravel(), slit_index=slit_index, **options,
-   )
-   fits = fits.reshape(*flux.shape[:-1], 9)
+   >>> n_wave = velocity_grid.size
+   >>> grids = np.stack([velocity_grid, velocity_grid + 5.0])  # (n_slit, M)
+   >>> flux = np.tile(spectrum, (3, 2, 1))  # (y, slit, M)
+   >>> flux_noise = np.full_like(flux, 0.05)
+   >>> slit_axis = 1
+   >>> guides = np.zeros(flux.shape[:-1], dtype=np.float32)
+   >>> options = dict(
+   ...     velocity_range=200.0, npix=10, npix_slack=2,
+   ...     dv=float(np.median(np.gradient(velocity_grid))), width_min=5.0, width_max=100.0,
+   ...     width_guess=30.0, amplitude_rel_min=0.1, amplitude_rel_max=2.0,
+   ... )
+
+   >>> rows = flux.reshape(-1, n_wave)                     # view
+   >>> slit_index = np.indices(flux.shape[:-1])[slit_axis].ravel()
+   >>> fits, indices = fit_spectra_batch(
+   ...     spectra=rows, dopp_slit=grids, spec_noise=flux_noise.reshape(-1, n_wave),
+   ...     guide_velocities=guides.ravel(), slit_index=slit_index, **options,
+   ... )
+   >>> fits = fits.reshape(*flux.shape[:-1], 9)
 
 Output format
 -------------
@@ -152,12 +167,12 @@ Convert the float32 quality column to integers before testing individual bits:
 
 .. code-block:: python
 
-   from gaussfit_rs import FLAG_SUCCESS, QUALITY_UNCONSTRAINED, QUALITY_ZERO_ERROR
+   >>> from gaussfit_rs import FLAG_SUCCESS, QUALITY_UNCONSTRAINED, QUALITY_ZERO_ERROR
 
-   flags = fits[:, 8].astype("uint8")
-   failed = fits[:, 7] != FLAG_SUCCESS
-   unconstrained = (flags & QUALITY_UNCONSTRAINED) != 0
-   suspect = (flags & (QUALITY_UNCONSTRAINED | QUALITY_ZERO_ERROR)) != 0
+   >>> flags = fits[..., 8].astype("uint8")
+   >>> failed = fits[..., 7] != FLAG_SUCCESS
+   >>> unconstrained = (flags & QUALITY_UNCONSTRAINED) != 0
+   >>> suspect = (flags & (QUALITY_UNCONSTRAINED | QUALITY_ZERO_ERROR)) != 0
 
 ``suspect`` includes zero-error fits for inspection; it is not an automatic rejection rule for
 exact fits. Failed fits must be checked separately because their quality bits are zero.
@@ -192,14 +207,17 @@ without the peak search, for use outside the spectral pipeline:
 
 .. code-block:: python
 
-   from gaussfit_rs import fit_gaussian
+   >>> from gaussfit_rs import fit_gaussian
 
-   row = fit_gaussian(
-       x=x, y=y, error=err,
-       initial=[1.0, 0.0, 10.0],          # amplitude, mean, sigma
-       lower_bounds=[0.0, -50.0, 1.0],
-       upper_bounds=[5.0, 50.0, 40.0],
-   )
+   >>> x = np.linspace(-50.0, 50.0, 41)
+   >>> y = 2.0 * np.exp(-0.5 * (x / 10.0) ** 2)
+   >>> err = np.full_like(y, 0.05)
+   >>> row = fit_gaussian(
+   ...     x=x, y=y, error=err,
+   ...     initial=[1.0, 0.0, 10.0],          # amplitude, mean, sigma
+   ...     lower_bounds=[0.0, -50.0, 1.0],
+   ...     upper_bounds=[5.0, 50.0, 40.0],
+   ... )
 
 The row holds columns 0-7 of the layout above, with no quality column; *flag* is
 ``FLAG_SUCCESS`` or ``FLAG_NO_CONVERGENCE``.
