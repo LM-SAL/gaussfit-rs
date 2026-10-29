@@ -61,7 +61,6 @@ exclude = [
   ".gitignore",
   ".pre-commit-config.yaml",
   ".readthedocs.yaml",
-  ".clippy.toml",
   "rustfmt.toml",
   "ruff.toml",
   "tox.ini",

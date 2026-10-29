@@ -6,7 +6,7 @@ Requirements
 
 - Python >= 3.12
 - NumPy >= 2.3
-- Rust >= 1.85 and `maturin <https://github.com/PyO3/maturin>`_ (source builds only)
+- Rust >= 1.99 and `maturin <https://github.com/PyO3/maturin>`_ (source builds only)
 
 From PyPI
 ---------
