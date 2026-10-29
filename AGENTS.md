@@ -62,6 +62,7 @@ An agent proposes these and lists them under **Needs a person**; a person makes 
 - Fragments are `changelog/<PR>.<type>.rst`, with a counter for several of one type (`123.feature.1.rst`).
 - Development commands, including the C reference and the figure tests, are in "Development" in `docs/installation.rst`.
 - The Rust core is in `src/`, with its tests in `src/tests/` (`cargo test`). `pip install -e ".[dev]"` builds it through maturin; run that again after a Rust change, before testing from Python.
+- The module is declared safe without the GIL (`gil_used = false` in `src/lib.rs`), so new Rust code keeps no shared mutable state (statics, caches, `OnceLock`): only per-call or per-thread state, like the workspaces in `src/gaussian.rs` and `src/spectrum.rs`.
 - `docs/design-notes.rst` holds one decision per section and names the code and tests that pin it; a change to those updates the section.
 - `test_c_parity.py` compares fits with MUSE's C extension: the recorded fixtures always, and the extension live once `pip install ./third_party/c_reference` (C compiler needed) is in place. CI runs the live tests on Linux (`tox -e py313-cparity`); on macOS a few seeds fail against the Linux-recorded results, which is not a bug.
 - Visual output is tested with the `figure_test` helper in `python/gaussfit_rs/tests/helpers.py`. The figure hash library is made on Linux by CircleCI, so figure tests fail on macOS; that is not a bug.
