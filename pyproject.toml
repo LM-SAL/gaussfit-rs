@@ -66,6 +66,7 @@ exclude = [
   "ruff.toml",
   "tox.ini",
   "pytest.ini",
+  "AGENTS.md",
 ]
 
 [tool.gilesbot.circleci_artifacts.figure_report]
