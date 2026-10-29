@@ -25,6 +25,14 @@ napoleon_preprocess_types = True
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 autodoc_typehints_description_target = "documented"
+nitpicky = True
+# numpy documents NDArray as data and its scalar types as attributes, so the class references
+# autodoc makes from the return annotations cannot resolve.
+nitpick_ignore = [
+    ("py:class", "NDArray"),
+    ("py:class", "np.float32"),
+    ("py:class", "np.int32"),
+]
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable", None),

@@ -129,8 +129,8 @@ half-open and ``(0, 0)`` when no peak was found.
 Fit quality indicator
 ---------------------
 
-Column 8 is 0 for failed fits (the flag column reports those) and otherwise a mask of these bits, exported as :data:`~gaussfit_rs.QUALITY_UNCONSTRAINED`,
-:data:`~gaussfit_rs.QUALITY_ZERO_ERROR` and :data:`~gaussfit_rs.QUALITY_PEGGED`:
+Column 8 is 0 for failed fits (the flag column reports those) and otherwise a mask of these bits, exported as :data:`~gaussfit_rs.fitting.QUALITY_UNCONSTRAINED`,
+:data:`~gaussfit_rs.fitting.QUALITY_ZERO_ERROR` and :data:`~gaussfit_rs.fitting.QUALITY_PEGGED`:
 
 .. list-table::
    :header-rows: 1
