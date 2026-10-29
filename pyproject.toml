@@ -53,6 +53,7 @@ module-name = "gaussfit_rs._gaussfit_rs"
 exclude = [
   "third_party/c_reference/**",
   "benchmarks/**",
+  "changelog/**",
   "docs/**",
   ".circleci/**",
   ".github/**",
@@ -93,3 +94,45 @@ pre-summary-newline = true
 close-quotes-on-newline = true
 make-summary-multi-line = true
 black = true
+
+[tool.towncrier]
+package = "gaussfit_rs"
+filename = "CHANGELOG.rst"
+directory = "changelog/"
+issue_format = "`#{issue} <https://github.com/LM-SAL/gaussfit-rs/pull/{issue}>`__"
+title_format = "{version} ({project_date})"
+
+[[tool.towncrier.type]]
+directory = "breaking"
+name = "Breaking Changes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "deprecation"
+name = "Deprecations"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removal"
+name = "Removals"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "feature"
+name = "New Features"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "bugfix"
+name = "Bug Fixes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "doc"
+name = "Documentation"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "trivial"
+name = "Internal Changes"
+showcontent = true
