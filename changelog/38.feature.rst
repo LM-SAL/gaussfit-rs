@@ -1,0 +1,1 @@
+Wheels are now published for Linux arm64 and for free-threaded CPython 3.14 and 3.15, on which gaussfit-rs runs without the GIL. One wheel per platform now serves CPython 3.12 and every later version.

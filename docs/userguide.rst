@@ -45,6 +45,9 @@ Batch fitting (IFU data)
 ``(N, M)`` array and fits every row concurrently with Rayon, releasing the GIL for the whole
 computation. ``spec_noise`` has the same shape as ``spectra``; ``guide_velocities`` is one value
 per row or a scalar for all rows.
+Other threads keep running meanwhile, so leave the input arrays unchanged until the call
+returns: as with NumPy, writing to an array that another thread is reading gives inconsistent
+results.
 
 .. code-block:: python
 

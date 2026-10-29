@@ -34,7 +34,9 @@ const GTOL: f32 = 1.0e-6;
 const MAX_ITER: usize = 2000;
 const MAX_ITER_PY: isize = MAX_ITER as isize;
 
-#[pymodule]
+// Safe without the GIL: the only mutable state is the per-thread workspaces in gaussian.rs and
+// spectrum.rs.
+#[pymodule(gil_used = false)]
 #[pyo3(name = "_gaussfit_rs")]
 fn gaussfit_rs(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(api::fit_spectra_batch, module)?)?;

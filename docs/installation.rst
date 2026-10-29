@@ -6,12 +6,14 @@ Requirements
 
 - Python >= 3.12
 - NumPy >= 2.3
-- Rust >= 1.85 and `maturin <https://github.com/PyO3/maturin>`_ (source builds only)
+- Rust >= 1.99 and `maturin <https://github.com/PyO3/maturin>`_ (source builds only)
 
 From PyPI
 ---------
 
-Wheels are published for Linux x86-64, macOS arm64 and Windows x86-64:
+Wheels are published for Linux x86-64 and arm64, macOS arm64 and Windows x86-64. Each platform
+has one wheel for CPython 3.12 and later, and one each for free-threaded CPython 3.14 and 3.15,
+on which gaussfit-rs runs without the GIL:
 
 .. code-block:: bash
 

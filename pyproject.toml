@@ -61,7 +61,6 @@ exclude = [
   ".gitignore",
   ".pre-commit-config.yaml",
   ".readthedocs.yaml",
-  ".clippy.toml",
   "rustfmt.toml",
   "ruff.toml",
   "tox.ini",
@@ -75,7 +74,7 @@ message = "Click details to see the figure test comparisons, for py313-figure."
 
 [tool.cibuildwheel]
 build-frontend = "build"
-skip = ["pp*", "*-win32", "*-manylinux_i686"]
+skip = ["*-win32", "*-manylinux_i686"]
 test-extras = ["tests"]
 test-command = "pytest --pyargs gaussfit_rs"
 

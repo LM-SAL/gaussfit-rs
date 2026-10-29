@@ -99,8 +99,9 @@ jobs:
         - linux: build_docs
 
   build_dists:
-    # Twelve wheels with LTO: built for tags, and for a PR labelled "Run publish" to rehearse
-    # a release, not on every push to main or the weekly schedule.
+    # Twelve wheels with LTO, per platform one abi3 wheel (built on 3.12, tested on each later
+    # version) and one each for 3.14t and 3.15t: built for tags, and for a PR labelled
+    # "Run publish" to rehearse a release, not on every push to main or the weekly schedule.
     if: |
       startsWith(github.ref, 'refs/tags/v') ||
       (
@@ -115,8 +116,15 @@ jobs:
       test_command: "pytest -p no:warnings --pyargs gaussfit_rs"
       targets: |
         - cp3{12,13,14,15}-manylinux_x86_64
+        - cp3{14,15}t-manylinux_x86_64
+        - target: "cp3{12,13,14,15}-manylinux_aarch64"
+          runs-on: ubuntu-24.04-arm
+        - target: "cp3{14,15}t-manylinux_aarch64"
+          runs-on: ubuntu-24.04-arm
         - cp3{12,13,14,15}-macosx_arm64
+        - cp3{14,15}t-macosx_arm64
         - cp3{12,13,14,15}-win_amd64
+        - cp3{14,15}t-win_amd64
       submodules: false
       save_artifacts: true
       upload_to_pypi: false
