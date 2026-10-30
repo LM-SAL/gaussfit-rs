@@ -1,5 +1,5 @@
 """
-Record reference fits from MUSE's C extension for the parity and figure tests.
+Record reference fits from the pinned C extension for the parity and figure tests.
 
 Install the pinned test reference with ``pip install ./third_party/c_reference``, then run::
 
@@ -196,7 +196,7 @@ def build_cases(params, seed=FIXTURE_SEED):  # noqa: C901
 
 def run_c(dopp, spectra, noise, guides, params):
     """
-    Fit every spectrum with the pinned MUSE C extension.
+    Fit every spectrum with the pinned C extension.
     """
     from gaussfit_c_reference.fit_single_spectrum_ext import (  # noqa: PLC0415
         _fit_single_spectrum_c,

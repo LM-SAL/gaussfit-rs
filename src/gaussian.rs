@@ -356,7 +356,7 @@ mod derivative_tests {
         )
         .unwrap();
 
-        // Reference values from MUSE's float32 C extension. In particular,
+        // Reference values from the float32 C reference. In particular,
         // sigma is at its upper bound but must retain a non-zero uncertainty.
         let expected = [0.008_243_047, 4.667_220_6, 16.366_814];
         for (actual, expected) in outcome.errors.into_iter().zip(expected) {

@@ -41,7 +41,7 @@ def assert_fit_parity(
     fits, c_fits, dv, *, indices=None, c_indices=None, labels=None, accepted_worse=None
 ):
     """
-    Assert that Rust fit results satisfy the parity contract with MUSE's C extension.
+    Assert that Rust fit results satisfy the parity contract with the C reference.
 
     Flags and fit windows must be identical, and failed fits must be NaN. Successful parameters
     and chi-square must be finite in both implementations. Parameters must agree to

@@ -18,7 +18,7 @@ Peak Detection And Velocity-Window Semantics
 ``FLAG_NO_LOCAL_MAX`` if the peak is empty, non-positive, or lies outside the strict
 ``velocity_range``, and otherwise normalises the fitting window by the peak and runs the
 bounded Levenberg-Marquardt fit. ``npix_slack`` is therefore a vetting band, not an acceptance
-band: a peak found only in the slack band is rejected, as in the MUSE C extension pinned under
+band: a peak found only in the slack band is rejected, as in the C extension pinned under
 ``third_party/c_reference``. Nothing here establishes a line detection; a positive noise peak
 inside the strict interval is fitted.
 
@@ -82,9 +82,9 @@ legitimately pinned at ``width_max``. On the synthetic fixtures 35 % of solved `
 11 % of ``wide`` rows set some bit, almost all of it bit 4. After converting column 8 to
 integers (see the user guide), ``flags != 0`` selects any bit and ``(flags & (1|2)) != 0`` large
 or zero errors; neither is an automatic rejection policy. The amplitude interval is excluded on
-purpose: the MUSE configuration uses +/-10 % of the normalisation peak, a detection window
-rather than a physical range, and comparing the amplitude error with it would flag ordinary
-low-SNR fits.
+purpose: the Level 2 pipeline configuration uses +/-10 % of the normalisation peak, a detection
+window rather than a physical range, and comparing the amplitude error with it would flag
+ordinary low-SNR fits.
 
 **Limitations.** Formal errors come from the inverse of ``J.T @ J`` scaled by
 ``sqrt(chi2 / (N - 3))``: local covariance estimates in float64 at the fitted parameters, not

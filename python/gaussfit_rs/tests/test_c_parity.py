@@ -1,5 +1,5 @@
 """
-Parity with MUSE's C extension, the reference implementation.
+Parity with the pinned C extension, the reference implementation.
 
 ``test_matches_recorded_c_reference`` always runs against the fixtures written by
 ``make_c_reference.py``; ``test_matches_live_c_extension`` also runs, over many generator seeds,

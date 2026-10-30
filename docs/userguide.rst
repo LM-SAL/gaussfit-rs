@@ -198,7 +198,7 @@ Tolerances
 ----------
 
 Every fitting function takes ``xtol``, ``ftol``, ``gtol`` (default ``1e-6``) and ``max_iter``
-(default 2000), the MUSE C extension's settings; they must be finite and positive. The other
+(default 2000), the C reference's settings; they must be finite and positive. The other
 options must be finite, with positive ``npix`` and ``dv``, non-negative ``npix_slack`` and
 ``velocity_range``, and increasing amplitude and width bounds.
 
