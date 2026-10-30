@@ -56,7 +56,7 @@ fn bound_pinned_window_matches_c_reference() {
     // Guards MPFIT's bound-limited step (third_party/rmpfit/VENDORED.md): if
     // the step leaves sigma a couple of ULP above width_min instead of on it,
     // alpha collapses to ~1e-14 and the solver reports `Par` after 4
-    // iterations at reduced chi-square 56.66. Expected values are MUSE's
+    // iterations at reduced chi-square 56.66. Expected values are the
     // float32 C extension output for this corpus window (parameter set
     // "wide", seed 1, row 314), normalised by the peak.
     let x = [

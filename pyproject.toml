@@ -7,7 +7,7 @@ build-backend = "maturin"
 [project]
 name = "gaussfit-rs"
 dynamic = ["version"]  # taken from Cargo.toml by maturin
-description = "Rust backend for MUSE fast Gaussian fitting"
+description = "Rust backend for fast Gaussian fitting"
 readme = "README.md"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
