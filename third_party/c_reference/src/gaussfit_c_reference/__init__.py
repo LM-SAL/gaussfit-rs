@@ -1,3 +1,3 @@
 """
-Pinned, test-only MUSE C Gaussian fitting reference.
+Pinned, test-only C Gaussian fitting reference.
 """

@@ -1,5 +1,5 @@
 """
-Build the pinned C reference independently of MUSE and the Rust wheel.
+Build the pinned C reference independently of its upstream package and the Rust wheel.
 """
 
 import sys

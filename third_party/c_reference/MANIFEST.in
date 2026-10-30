@@ -1,2 +1,2 @@
-include README.md SOURCES.json LICENSE.*
+include README.md LICENSE.*
 recursive-include vendor *.c *.h DISCLAIMER

@@ -1,80 +1,33 @@
 # Pinned C reference
 
-This test-only package builds MUSE's Gaussian fitting C extension without
-installing MUSE or ftoolss. It is independent of the gaussfit-rs Rust wheel
-and is not a runtime dependency. A C17 compiler and Python development
-headers are required; pip installs the NumPy headers and setuptools build
-dependencies in isolation.
+Test-only package that builds the reference C Gaussian fitter for
+`python/gaussfit_rs/tests/test_c_parity.py`. It is not a dependency of the gaussfit-rs wheel.
+It needs a C17 compiler and Python development headers.
 
 From the repository root, in an activated Python environment:
 
 ```bash
 python -m pip install './third_party/c_reference' '.[tests]'
-python -c 'import gaussfit_c_reference.fit_single_spectrum_ext'
 python -m pytest python/gaussfit_rs/tests/test_c_parity.py
 ```
 
-Or run `tox -e py313-cparity`. This environment installs the local reference
-and requires it to import before running the tests. The GitHub Actions
-`c_parity` job uses this environment. Ordinary test environments still run
-the recorded fixtures and skip the live comparison if this package is absent.
+Or run `tox -e py313-cparity`, as the CI `c_parity` job does. Without this package the parity
+tests still check the recorded fixtures and skip the live comparison.
 
-## Provenance and build
+## Sources
 
-`SOURCES.json` records the upstream repository, revision, path, and SHA-256
-of each copied file. The C files are unchanged:
+The files in `vendor/` are copied unchanged:
 
-- `fit_single_spectrum_ext.c` comes from MUSE revision
-  `74df595bcf2367f2cebee41acba2646bdf22f248`.
-- `gaussian_deviate.c`, `mpfit.c`, `mpfit.h`, and CMPFIT's `DISCLAIMER`
-  come from ftoolss revision `9a8a9defd61d6e560a7cf1f44dae21eb4b1c8e90`.
-  They also match the files vendored in the local MUSE build used to
-  validate this snapshot. This is ftoolss's modified CMPFIT, including
-  float32 support, rather than a stock CMPFIT release.
+- `fit_single_spectrum_ext.c`: revision `74df595bcf2367f2cebee41acba2646bdf22f248` of the private
+  upstream repository.
+- `gaussian_deviate.c` and `cmpfit-1.5/`: [ftoolss](https://github.com/steinhh/ftools) revision
+  `9a8a9defd61d6e560a7cf1f44dae21eb4b1c8e90`, a modified CMPFIT with float32 support.
 
-The build uses `MPFIT_FLOAT=1`, C17, and optimization, as MUSE does.
-Only the Python package namespace changes: the extension is installed as
-`gaussfit_c_reference.fit_single_spectrum_ext`. No MUSE Python modules are
-imported and no Rust implementation is used by the reference.
+To update, copy the new files unchanged, update the revisions above, reinstall with
+`pip install --force-reinstall ./third_party/c_reference` (or `tox -r -e py313-cparity`, as tox
+caches the build) and run the parity tests. Do not modify the C code to make Rust tests pass.
 
-See `LICENSE.muse`, `LICENSE.ftoolss`, and
-`vendor/cmpfit-1.5/DISCLAIMER` for the upstream licensing notices.
-This product includes software developed by the University of Chicago,
-as Operator of Argonne National Laboratory.
+## Licenses
 
-## Updating the reference
-
-Keep updates explicit: copy the files from identified upstream revisions,
-retain their licenses, and update the paths, revisions, and hashes in
-`SOURCES.json`. Rebuild and run the parity suite before replacing fixtures:
-
-```bash
-python -m pip install --force-reinstall ./third_party/c_reference
-python -m pytest python/gaussfit_rs/tests/test_c_parity.py
-```
-
-tox caches the built reference, so after changing anything under `vendor/`
-recreate the environment with `tox -r -e py313-cparity`.
-
-Do not modify the C implementation to make Rust tests pass.
-
-The pinned solver has no evaluation cap (`conf.maxfev = 0`) and its LM loop
-only advances the iteration count on accepted steps, so some inputs never
-return: NaN noise or NaN velocity values inside the fit window, inf pixels,
-zero noise, and at least one finite corpus case (`muse` seed 27). Run the
-generator and any new sweep under a watchdog, and list seeds that hang in
-`HANGS_C` in `test_c_parity.py`. rmpfit carries a
-bound-snap fix that stock CMPFIT lacks, so Rust may legitimately beat this
-reference on windows where C stalls at a bound; the parity contract is
-one-sided for that reason.
-
-To regenerate the recorded fixtures with the installed reference:
-
-```bash
-python -m gaussfit_rs.tests.make_c_reference
-```
-
-Review fixture changes and figure comparisons before updating image hashes.
-Passing these tests establishes the documented tolerance contract on the
-selected spectra. It does not establish equivalence for all inputs;
-the generator documents intentionally excluded cases.
+See `LICENSE.ftoolss` and `vendor/cmpfit-1.5/DISCLAIMER`. This product includes software
+developed by the University of Chicago, as Operator of Argonne National Laboratory.
