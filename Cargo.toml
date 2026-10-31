@@ -1,6 +1,6 @@
 [package]
 name = "gaussfit-rs"
-version = "2.2.0"
+version = "2.2.1"
 edition = "2021"
 rust-version = "1.99"
 description = "Rust backend for fast Gaussian fitting"
