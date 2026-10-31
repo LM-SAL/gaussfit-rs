@@ -1,1 +1,0 @@
-Building gaussfit-rs from source now needs Rust 1.99 or later; macOS 27 can refuse to load an extension stripped by Rust 1.97 or older ("mis-aligned LINKEDIT string pool").
