@@ -47,7 +47,7 @@ jobs:
     # Every supported Python once and every platform once: the C-parity job needs Linux for
     # the pinned C extension, the newest Python goes on Linux too, the others on macOS and Windows.
     needs: [rust]
-    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@8d5ad7efc8e84a051639373f6ea0d10441eafee1 # v3.2.1
     with:
       submodules: false
       toxdeps: tox-pypi-filter
@@ -67,7 +67,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Install Rust stable
@@ -89,7 +89,7 @@ jobs:
 
   docs:
     needs: [rust]
-    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@8d5ad7efc8e84a051639373f6ea0d10441eafee1 # v3.2.1
     with:
       default_python: "3.14"
       submodules: false
@@ -109,7 +109,7 @@ jobs:
         contains(github.event.pull_request.labels.*.name, 'Run publish')
       )
     needs: [tests, docs, dist_check]
-    uses: OpenAstronomy/github-actions-workflows/.github/workflows/publish.yml@3a3dcf3ba6828dac29eba10334948ef38364ed14 # v3.1.0
+    uses: OpenAstronomy/github-actions-workflows/.github/workflows/publish.yml@8d5ad7efc8e84a051639373f6ea0d10441eafee1 # v3.2.1
     with:
       sdist: true
       test_extras: "tests"
@@ -148,4 +148,4 @@ jobs:
       - name: List artifacts
         run: ls -lha dist/
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
