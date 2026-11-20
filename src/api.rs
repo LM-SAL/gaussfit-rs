@@ -77,19 +77,9 @@ fn validate_spectrum_options(
     Ok(())
 }
 
-/// Fit Gaussians to N spectra in parallel.
-///
-/// `spectra` and `spec_noise` are `(N, M)`, `dopp_slit` is `(n_slit, M)`, and
-/// row `i` is fitted against `dopp_slit[slit_index[i]]` (row 0 when
-/// `slit_index` is None, which requires a single Doppler row) with guide
-/// velocity `guide_velocities[i]`. Each result row is `[amp, vel, sigma,
-/// amp_err, vel_err, sig_err, reduced_chi2, flag, quality]`, the ninth column
-/// being the quality bits (0 for failed fits); the second array holds the `(i_left,
-/// i_right)` fit window per row and the third the solver counts `[n_iter,
-/// n_fev]` (-1 unless the fit converged). `flag` is `FLAG_SUCCESS`, `FLAG_NO_LOCAL_MAX`
-/// (no positive peak in the search window, including a non-finite guide, or
-/// fewer than 3 valid samples) or `FLAG_NO_CONVERGENCE`; all other fields are
-/// NaN unless the flag is success.
+/// Fit one Gaussian per row, using `slit_index` to select each velocity grid.
+/// Returns fit rows, half-open window indices and solver counts.
+/// On failure the seven fit values are NaN, quality is zero and both counts are -1.
 #[pyfunction]
 #[pyo3(signature = (spectra, dopp_slit, spec_noise, guide_velocities, velocity_range, npix,
     npix_slack, dv, width_min, amplitude_rel_min, amplitude_rel_max, width_max, width_guess,

@@ -35,7 +35,7 @@ def _pool_for_count(workers: int) -> _WorkerPool:
 
 def resolve_pool(workers: int | None) -> _WorkerPool | None:
     """
-    Select the explicit pool, or inherit the current context.
+    Use the requested thread count or inherit the active pool.
     """
     return _active.get() if workers is None else _pool_for_count(workers)
 
@@ -45,8 +45,7 @@ def set_workers(workers: int) -> Iterator[None]:
     """
     Reuse a pool of ``workers`` threads for parallel calls in this context.
 
-    An explicit ``workers=`` on a call overrides the context. Leaving the context restores the
-    previous pool, including when a call raises.
+    A call can override the count with ``workers``. Exiting the block restores the previous pool.
     """
     token = _active.set(_pool_for_count(workers))
     try:

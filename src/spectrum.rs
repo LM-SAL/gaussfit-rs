@@ -11,7 +11,6 @@ thread_local! {
     static WINDOW: RefCell<[Vec<f32>; 3]> = const { RefCell::new([Vec::new(), Vec::new(), Vec::new()]) };
 }
 
-/// Internal result returned by `fit_single_spectrum_core`.
 #[derive(Clone, Copy, Debug)]
 pub struct FitSingleSpectrumResult {
     /// `[amp, vel, sigma, amp_err, vel_err, sig_err, reduced_chi2, flag]`
@@ -66,8 +65,6 @@ pub fn fit_single_spectrum_core(
     let mut imax = 0usize;
     let mut max_val = f32::NEG_INFINITY;
 
-    // A non-finite guide makes every comparison false, so no peak is found
-    // and FLAG_NO_LOCAL_MAX is returned, matching the C extension.
     for i in 0..sg_xpixels {
         let vel_abs = (dopp_slit[i] - guide_velocity).abs();
         if vel_abs <= velocity_range + dv_slac {
@@ -79,15 +76,12 @@ pub fn fit_single_spectrum_core(
         }
     }
 
-    // No finite, positive peak in the search window. Covers the all-NaN /
-    // empty-window case (where `max_val` stays -inf) and non-positive peaks
-    // that would otherwise invert the sign under normalisation by `max_val`.
+    // Normalising by a negative peak would reverse the sign of the spectrum.
     if max_val <= 0.0 {
         return result_with_flag(FLAG_NO_LOCAL_MAX, 0, 0);
     }
 
-    // Match the original C extension: the slack-widened window is only used to
-    // vet local maxima. A peak found in the slack band is rejected.
+    // A brighter peak in the slack band disqualifies the in-range peak.
     if (dopp_slit[imax] - guide_velocity).abs() > velocity_range {
         return result_with_flag(FLAG_NO_LOCAL_MAX, 0, 0);
     }
@@ -96,10 +90,7 @@ pub fn fit_single_spectrum_core(
     let mut i_left = imax.saturating_sub(npix);
     let mut i_right = (imax + npix + 1).min(sg_xpixels);
 
-    // Inherited from the original C extension: when the window is clamped at a
-    // spectrum edge, only one extra pixel per side is recovered, so a peak
-    // near the edge fits with fewer than `2 * npix + 1` samples. Kept so the
-    // window selection stays compatible with the C code near edges.
+    // Match the C fitter at an edge by recovering at most one extra pixel per side.
     if i_right - i_left < (2 * npix + 1) {
         i_left = imax.saturating_sub(npix + 1);
         i_right = (imax + npix + 2).min(sg_xpixels);
@@ -117,8 +108,6 @@ pub fn fit_single_spectrum_core(
             let x = dopp_slit[i];
             let y = spectrum[i] / max_val;
             let e = spec_noise[i] / max_val;
-            // Skip masked / invalid samples: a single non-finite or
-            // non-positive noise value would otherwise abort the whole fit.
             if x.is_finite() && y.is_finite() && e.is_finite() && e > 0.0 {
                 xdata.push(x);
                 ydata.push(y);
@@ -126,8 +115,7 @@ pub fn fit_single_spectrum_core(
             }
         }
 
-        // A peak was found, but masking left too few valid samples to constrain a
-        // 3-parameter fit. Reported as FLAG_NO_LOCAL_MAX to match the C extension.
+        // The C fitter uses this status when too few samples survive masking.
         if xdata.len() < 3 {
             return result_with_flag(FLAG_NO_LOCAL_MAX, i_left as i32, i_right as i32);
         }
@@ -155,8 +143,7 @@ pub fn fit_single_spectrum_core(
             FLAG_SUCCESS,
         ];
 
-        // Compare errors with the velocity and width spans. The amplitude bounds
-        // form a detection window; see the quality-bit rationale in docs/design-notes.rst.
+        // The relative amplitude bounds are a detection window, so only velocity and width count.
         let mut quality = 0u8;
         if outcome.errors[1] >= 2.0 * vel_half_range || outcome.errors[2] >= (width_max - width_min)
         {
@@ -172,8 +159,7 @@ pub fn fit_single_spectrum_core(
             .zip(bounds.iter())
             .any(|(param, bound)| *param == bound[0] || *param == bound[1])
         {
-            // rmpfit clamps a parameter onto the bound exactly, so equality is the
-            // right test here.
+            // rmpfit clamps to the exact bound.
             quality |= QUALITY_PEGGED;
         }
 

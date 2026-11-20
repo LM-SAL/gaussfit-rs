@@ -10,23 +10,15 @@ use pyo3::prelude::{pymodule, Bound, PyModule, PyResult, Python};
 use pyo3::types::PyModuleMethods;
 use pyo3::wrap_pyfunction;
 
-/// Fit-status flag: optimisation converged successfully.
 const FLAG_SUCCESS: f32 = 0.0;
-/// Fit-status flag: no spectral peak found within the search window.
 const FLAG_NO_LOCAL_MAX: f32 = 1.0;
-/// Fit-status flag: LM optimiser did not converge within `max_iter` iterations.
 const FLAG_NO_CONVERGENCE: f32 = 2.0;
 
-// Quality bits, reported in the ninth result column
-// (see "Unconstrained-Fit Indicator" in docs/design-notes.rst). A
-// consumer that wants the permissive "any of them" answer tests `!= 0`.
-/// Quality bit: a parameter's error is not smaller than the velocity or width interval it was
-/// bounded to, so that parameter is not constrained by the data.
+/// The velocity or width error spans its allowed interval.
 const QUALITY_UNCONSTRAINED: u8 = 1;
-/// Quality bit: a formal error is exactly zero, including singular or exact fits.
+/// A singular or exact fit can give a formal error of zero.
 const QUALITY_ZERO_ERROR: u8 = 2;
-/// Quality bit: a fitted parameter sits exactly on one of its bounds. Reported, not judged: it
-/// fires on legitimate saturation as well as on degenerate fits.
+/// A parameter reached a bound, which can also happen for a well-determined fit.
 const QUALITY_PEGGED: u8 = 4;
 
 const XTOL: f32 = 1.0e-6;

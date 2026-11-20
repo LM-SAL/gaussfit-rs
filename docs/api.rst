@@ -33,6 +33,6 @@ The constants are re-exported from the ``gaussfit_rs`` package.
 Worker configuration
 --------------------
 
-See :ref:`stage-worker-counts` for configuration precedence and examples.
+For usage examples, see :ref:`stage-worker-counts`.
 
 .. autofunction:: gaussfit_rs.set_workers

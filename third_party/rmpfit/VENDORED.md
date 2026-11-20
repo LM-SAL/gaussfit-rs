@@ -29,8 +29,7 @@ miss MPFIT's one-ULP snap and stall the fit with `alpha` ~1e-14, as CMPFIT can.
 `src/tests/gaussian.rs::bound_pinned_window_matches_c_reference` and
 `python/gaussfit_rs/tests/test_fit_gaussian.py::test_bound_limited_step_does_not_stall` guard
 it. And `MPFit::lmpar` clamps the trust-region parameter with `min` as CMPFIT and MINPACK do,
-which is where the one row named in "Accepted C-Parity Exception" in `docs/design-notes.rst`
-comes from. `src/gaussian.rs` bounds every parameter on both sides, so upstream's handling of
+which accounts for the [C-parity exception](https://gaussfit-rs.readthedocs.io/en/latest/design-notes.html#accepted-c-parity-exception). `src/gaussian.rs` bounds every parameter on both sides, so upstream's handling of
 unbounded parameters in `check_limits` does not apply.
 
 The crate's own `gaussian` test (numerical derivatives) fails on macOS arm64, upstream as well:
@@ -55,8 +54,7 @@ the problem's size. `MPFitter::mpfit` becomes a wrapper over a fresh workspace t
 residuals, covariance and errors into the status as before, so upstream callers see no change.
 Every value written to `fjac` is the same, in the same order: the parity corpus (92 corpora,
 38,083 rows) is bit-identical before and after. `src/gaussian.rs` keeps one workspace per thread
-in a `thread_local!`, so after the first fit on a thread a fit makes no heap allocation. Numbers
-under "Performance" in `docs/design-notes.rst`.
+in a `thread_local!`, so after the first fit on a thread a fit makes no heap allocation. See the [performance measurements][performance].
 
 `perf.patch` is a second performance patch, again with no numerical effect: the Rust outputs over
 the same 92-corpus parity set (and two 20,000-spectrum benchmark batches) are bit-identical before
@@ -69,8 +67,7 @@ zeroes `fjac` and the analytical derivative columns, since every element is over
 is read (a user `jacobian` must therefore fill every element of each column). And
 `MPConfig::no_covar` lets a caller that derives its own errors (as `src/gaussian.rs` does) skip
 the covariance pass at the end of the fit. Measured together, these cut the cycles per fit by 6 % at a 5-sample window and 3 % at 21
-samples with the instruction count unchanged; numbers and the two rejected variants under
-"Performance" in `docs/design-notes.rst`.
+samples with the instruction count unchanged. The [design notes][performance] include the rejected variants.
 
 Every local change is marked `gaussfit-rs local patch` at the patch site. Nothing else in the
 file differs from upstream; check with
@@ -108,7 +105,7 @@ first publish year) is unverified because the upstream host is behind an anti-bo
    for `workspace`, then `perf`. If upstream gains a reusable workspace of its own, drop
    `workspace.patch` and point `src/gaussian.rs` at the upstream entry point; if it takes any
    part of `perf.patch`, drop that hunk. The gate for both is `benchmarks/throughput.py` plus
-   the byte comparison under "Performance" in `docs/design-notes.rst`. Once neither patch is
+   the [byte comparison][performance]. Once neither patch is
    left, replace the path dependency with `rmpfit = "=<version>"` and delete this directory.
 3. Update the version, checksums and date in this file, then regenerate each patch against its own
    base — not both against upstream. `workspace.patch` is
@@ -121,3 +118,5 @@ first publish year) is unverified because the upstream host is behind an anti-bo
    `ACCEPTED_WORSE` in `python/gaussfit_rs/tests/test_c_parity.py` names a documented exception.
    The gate fails if an exception is listed but no longer taken, so if an upstream change moves
    that row back under the normal contract, delete the entry and its design-notes section.
+
+[performance]: https://gaussfit-rs.readthedocs.io/en/latest/design-notes.html#performance
