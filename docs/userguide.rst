@@ -224,3 +224,16 @@ without the peak search, for use outside the spectral pipeline:
 
 The row holds columns 0-7 of the layout above, with no quality column; *flag* is
 ``FLAG_SUCCESS`` or ``FLAG_NO_CONVERGENCE``.
+
+Stage worker counts
+-------------------
+
+Use a positive ``workers`` argument on ``fit_spectra_batch`` for one call.
+For repeated calls, create the pool once in the stage that runs them::
+
+    from gaussfit_rs import fit_spectra_batch, set_workers
+
+    with set_workers(4):
+        fits, windows = fit_spectra_batch(**fit_options)
+
+The pool applies to ``gaussfit_rs`` calls made in that context.

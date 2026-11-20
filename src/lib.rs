@@ -1,6 +1,7 @@
 mod api;
 mod gaussian;
 mod spectrum;
+mod workers;
 
 #[cfg(test)]
 mod tests;
@@ -39,6 +40,7 @@ const MAX_ITER_PY: isize = MAX_ITER as isize;
 #[pymodule(gil_used = false)]
 #[pyo3(name = "_gaussfit_rs")]
 fn gaussfit_rs(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<workers::WorkerPool>()?;
     module.add_function(wrap_pyfunction!(api::fit_spectra_batch, module)?)?;
     module.add_function(wrap_pyfunction!(api::fit_gaussian, module)?)?;
     module.add("FLAG_SUCCESS", FLAG_SUCCESS)?;

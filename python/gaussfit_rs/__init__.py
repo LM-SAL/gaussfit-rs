@@ -4,6 +4,7 @@ gaussfit-rs.
 
 from importlib.metadata import version as _get_version
 
+from ._workers import set_workers
 from .fitting import (
     FLAG_NO_CONVERGENCE,
     FLAG_NO_LOCAL_MAX,
@@ -31,4 +32,5 @@ __all__ = [
     "fit_gaussian",
     "fit_single_spectrum",
     "fit_spectra_batch",
+    "set_workers",
 ]

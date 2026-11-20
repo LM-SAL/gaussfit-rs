@@ -182,3 +182,14 @@ slower, and every batch after that window at full speed. The cost is one spin wi
 BLAS-to-fit transition, negligible for a long batch. ``benchmarks/throughput.py`` sets
 ``OPENBLAS_NUM_THREADS=1`` before importing NumPy; a pipeline should do the same only if its own
 BLAS work is light.
+
+Worker pools
+------------
+
+A call with ``workers=n`` uses a local Rayon pool of that size.
+If the active pool already has that size, the call reuses it.
+``set_workers(n)`` creates one pool for a block of calls in the current Python
+context. The binding runs the parallel kernel inside the selected pool.
+Calls outside either setting use Rayon's default. Separate processes must enter
+their own context. The pool and context behavior are covered by the Rust
+worker-pool test and the Python worker tests.

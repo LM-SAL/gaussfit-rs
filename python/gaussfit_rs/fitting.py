@@ -51,6 +51,7 @@ import numpy as np
 
 from ._gaussfit_rs import fit_gaussian as _fit_gaussian
 from ._gaussfit_rs import fit_spectra_batch as _fit_spectra_batch
+from ._workers import resolve_pool
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
@@ -167,6 +168,7 @@ def fit_spectra_batch(
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
     meta: bool = False,
+    workers: int | None = None,
 ) -> (
     tuple[NDArray[np.float32], NDArray[np.int32]]
     | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.int32]]
@@ -220,6 +222,9 @@ def fit_spectra_batch(
         When True, a third return value carries the solver's ``[n_iter, n_fev]`` per row
         (accepted Levenberg-Marquardt iterations and model evaluations, Jacobian calls
         included) as int32, ``-1`` where the fit did not run or did not converge.
+    workers:
+        Number of Rayon threads for this call. By default use the active
+        worker context or Rayon's default pool.
 
     Returns
     -------
@@ -261,6 +266,7 @@ def fit_spectra_batch(
         float(ftol),
         float(gtol),
         int(max_iter),
+        resolve_pool(workers),
     )
     return (fits, indices, counts) if meta else (fits, indices)
 
