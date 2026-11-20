@@ -225,15 +225,32 @@ without the peak search, for use outside the spectral pipeline:
 The row holds columns 0-7 of the layout above, with no quality column; *flag* is
 ``FLAG_SUCCESS`` or ``FLAG_NO_CONVERGENCE``.
 
+.. _stage-worker-counts:
+
 Stage worker counts
 -------------------
 
-Use a positive ``workers`` argument on ``fit_spectra_batch`` for one call.
-For repeated calls, create the pool once in the stage that runs them::
+Pass a positive integer as ``workers=`` to :func:`~gaussfit_rs.fit_spectra_batch` for one call.
+For a stage with repeated calls, :func:`~gaussfit_rs.set_workers` lets them reuse one Rayon pool.
+An explicit count overrides the stage setting for that call. For example, these calls
+use four workers and one worker respectively.
 
-    from gaussfit_rs import fit_spectra_batch, set_workers
+>>> from gaussfit_rs import set_workers
+>>> batch = dict(spectra=spectra_2d, dopp_slit=velocity_grid, spec_noise=noise_2d,
+...              guide_velocities=0.0, **options)
+>>> with set_workers(4):
+...     fits, windows = fit_spectra_batch(**batch)
+...     single_worker_fits, _ = fit_spectra_batch(**batch, workers=1)
+>>> np.testing.assert_array_equal(fits, single_worker_fits)
 
-    with set_workers(4):
-        fits, windows = fit_spectra_batch(**fit_options)
+Leaving the block restores the previous setting. Each package manages its own pool.
+If stages run concurrently, budget workers across the active pools. For a stage running
+in another process, enter the context in that process.
 
-The pool applies to ``gaussfit_rs`` calls made in that context.
+With ``workers=None`` (the default), a call uses the active context or falls back to
+Rayon's default pool. Set ``RAYON_NUM_THREADS`` before starting Python to configure
+that fallback, for example ``RAYON_NUM_THREADS=4 python pipeline.py``. When unset,
+Rayon chooses the default size from the available CPUs.
+
+The batch fitter distributes spectra across workers. :func:`~gaussfit_rs.fit_single_spectrum`
+accepts the same option and submits one row. Each individual Gaussian fit runs serially.

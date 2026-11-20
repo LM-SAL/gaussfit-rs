@@ -30,4 +30,9 @@ The constants are re-exported from the ``gaussfit_rs`` package.
 .. autodata:: gaussfit_rs.fitting.QUALITY_ZERO_ERROR
 .. autodata:: gaussfit_rs.fitting.QUALITY_PEGGED
 
+Worker configuration
+--------------------
+
+See :ref:`stage-worker-counts` for configuration precedence and examples.
+
 .. autofunction:: gaussfit_rs.set_workers
