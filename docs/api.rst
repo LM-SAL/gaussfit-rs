@@ -29,3 +29,10 @@ The constants are re-exported from the ``gaussfit_rs`` package.
 .. autodata:: gaussfit_rs.fitting.QUALITY_UNCONSTRAINED
 .. autodata:: gaussfit_rs.fitting.QUALITY_ZERO_ERROR
 .. autodata:: gaussfit_rs.fitting.QUALITY_PEGGED
+
+Worker configuration
+--------------------
+
+For usage examples, see :ref:`stage-worker-counts`.
+
+.. autofunction:: gaussfit_rs.set_workers

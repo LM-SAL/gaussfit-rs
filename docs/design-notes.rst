@@ -1,10 +1,6 @@
 Design notes
 ============
 
-Design decisions and known limitations, one section per decision: what the
-code does, why, and what it costs. Each section names the code and the tests
-that pin the behavior, so a change to either is a change to the decision.
-
 Peak Detection And Velocity-Window Semantics
 --------------------------------------------
 
@@ -13,20 +9,11 @@ Peak Detection And Velocity-Window Semantics
 - **Tests:** ``src/tests/spectrum.rs::rejects_peak_inside_slack_zone``,
   ``src/tests/spectrum.rs::returns_no_local_max_when_no_sample_in_search_window``.
 
-``fit_single_spectrum_core`` searches for the brightest pixel within
-``|dopp_slit[i] - guide_velocity| <= velocity_range + dv * npix_slack``, rejects with
-``FLAG_NO_LOCAL_MAX`` if the peak is empty, non-positive, or lies outside the strict
-``velocity_range``, and otherwise normalises the fitting window by the peak and runs the
-bounded Levenberg-Marquardt fit. ``npix_slack`` is therefore a vetting band, not an acceptance
-band: a peak found only in the slack band is rejected, as in the C extension pinned under
-``third_party/c_reference``. Nothing here establishes a line detection; a positive noise peak
-inside the strict interval is fitted.
-
-**Tradeoff.** A brighter spurious sample in the slack band masks a valid lower in-range peak.
-Accepted because this package is a drop-in replacement for the C extension and its status
-semantics matter more than a better selection rule. If that changes, add an explicit
-signal-presence criterion (a minimum peak signal-to-noise or absolute threshold) rather than
-overloading ``npix_slack``.
+The search includes pixels within ``velocity_range + dv * npix_slack`` of the guide.
+The brightest pixel must be positive and within ``velocity_range`` for the fit to
+proceed. A brighter peak in the slack band therefore disqualifies a weaker peak
+inside the requested range. This preserves the C fitter's choice of peak.
+A positive noise fluctuation inside the range can still be fitted.
 
 Accepted C-Parity Exception
 ---------------------------
@@ -43,11 +30,10 @@ CMPFIT and MINPACK do (``third_party/c_reference/vendor/cmpfit-1.5/mpfit.c:2102`
 ``muse`` seed 44, row 165 it settles in a different local minimum than the float32 C
 extension: reduced chi-square 0.804 against C's 0.755 (1.065x).
 
-**Tradeoff.** The row is a named exception, capped at 1.10x, restricted to that row and
-asserted to be taken exactly once, rather than a wider tolerance, so the contract stays
-meaningful for every other row. Where Rust beats C, do not "repair" the corpus or widen the
-tolerance to make the rows agree. Once the row passes the normal gate the stale check fails;
-delete the entry and this section then.
+The test allows a ratio of up to 1.10 for this row alone. It checks that the
+exception is used exactly once so it can be removed when the row passes normally.
+
+.. _fit-quality-rationale:
 
 Unconstrained-Fit Indicator
 ---------------------------
@@ -75,16 +61,12 @@ carries three quality bits (zero for failed fits, which column 7 identifies):
 * **4 (``QUALITY_PEGGED``)**: a fitted parameter sits exactly on a bound (rmpfit clamps onto the
   bound exactly, so equality is the test).
 
-They are bits, not a boolean, because they mean different things and one flag would force one
-policy on every consumer. Pegging in particular is a report, not a verdict: on the ``muse``
-corpus 117 of 336 solved rows set bit 4, including 15 of 15 ``broad`` rows, a broad line
-legitimately pinned at ``width_max``. On the synthetic fixtures 35 % of solved ``muse`` rows and
-11 % of ``wide`` rows set some bit, almost all of it bit 4. After converting column 8 to
-integers (see the user guide), ``flags != 0`` selects any bit and ``(flags & (1|2)) != 0`` large
-or zero errors; neither is an automatic rejection policy. The amplitude interval is excluded on
-purpose: the Level 2 pipeline configuration uses +/-10 % of the normalisation peak, a detection
-window rather than a physical range, and comparing the amplitude error with it would flag
-ordinary low-SNR fits.
+The bits distinguish large errors from legitimate saturation. On the ``muse``
+corpus, 117 of 336 solved rows reached a bound, including all 15 broad lines.
+At least one bit was set in 35 % of solved ``muse`` rows and 11 % of ``wide``
+rows, usually for a bound. The amplitude interval is excluded because the
+Level 2 pipeline restricts it to within 10 % of the peak. Comparing the
+amplitude error to that narrow interval would flag ordinary low-SNR fits.
 
 **Limitations.** Formal errors come from the inverse of ``J.T @ J`` scaled by
 ``sqrt(chi2 / (N - 3))``: local covariance estimates in float64 at the fitted parameters, not
@@ -93,6 +75,8 @@ so a fit can carry a huge error or, through the guard, a zero one; zero-error de
 identify every unreliable uncertainty. Bit 1 needs the configured velocity and width intervals;
 reconstructing bit 4 from physical amplitudes needs the normalisation peak as well. Apply the
 caller's intensity masks first and evaluate any quality policy on the fits that survive them.
+
+.. _fit-performance:
 
 Performance
 -----------
@@ -182,3 +166,15 @@ slower, and every batch after that window at full speed. The cost is one spin wi
 BLAS-to-fit transition, negligible for a long batch. ``benchmarks/throughput.py`` sets
 ``OPENBLAS_NUM_THREADS=1`` before importing NumPy; a pipeline should do the same only if its own
 BLAS work is light.
+
+Worker pools
+------------
+
+``set_workers`` stores a Rayon pool in the current Python context. A call with the
+same worker count reuses it. A different count creates a pool for that call.
+``test_call_and_scoped_workers_reach_the_kernel`` checks which pool the binding
+receives. ``the_kernel_inherits_the_selected_pool`` checks the Rayon pool used by ``workers::run``.
+
+The worker helpers record the process ID on first use. A forked child inherits
+the pool handles without their worker threads.
+``test_forked_child_rejects_parent_workers`` covers implicit and explicit counts.

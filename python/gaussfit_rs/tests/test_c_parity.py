@@ -53,12 +53,7 @@ def test_matches_recorded_c_reference(fixture):
     _check(ref, ref["fits"], ref["indices"], ref["labels"])
 
 
-# Documented exceptions to the one-sided contract, each tied to a decision in
-# docs/design-notes.rst ("Accepted C-Parity Exception"). One row of this low-SNR family lands in a
-# different local minimum than the pinned C extension: absolute row 165, reduced chi-square
-# 0.804337 vs 0.755257, ratio 1.0650. The cap is that measured ratio plus margin, and the accepted
-# count below keeps it from going stale. Exempting the row (not the whole family) keeps the other
-# 39 low-SNR rows under the gate.
+# This row reaches a different local minimum. Its measured Rust/C chi-square ratio is 1.065.
 ACCEPTED_WORSE = {("muse", 44): {"low_snr": ({165}, 1.10)}}
 
 

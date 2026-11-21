@@ -120,15 +120,6 @@ impl MPFitter for GaussianProblem<'_> {
 /// `bounds[i] = [lower, upper]` for parameter `i` (amp, mean, sigma). Returns
 /// `None` if the solver did not reach a convergence criterion (e.g. it hit the
 /// iteration limit) or the inputs are invalid.
-///
-/// The fit is delegated to [`rmpfit`], a pure-Rust port of the CMPFIT/MINPACK
-/// `mpfit` routine, so the convergence semantics match the original C
-/// extension. The vendored copy in `third_party/rmpfit` carries local
-/// performance patches (a reusable per-thread workspace so a fit allocates
-/// nothing, and solver bookkeeping trims); see
-/// `third_party/rmpfit/VENDORED.md`. Parameter errors use the full
-/// three-parameter Hessian, including parameters at their bounds, matching
-/// the C SciPy-style covariance calculation.
 pub fn fit_gaussian_bounded(
     x: &[f32],
     y: &[f32],
@@ -158,8 +149,7 @@ pub fn fit_gaussian_bounded(
             return None;
         }
     }
-    // The solver may evaluate the model anywhere inside the box, and `eval`
-    // divides by sigma, so sigma = 0 must be unreachable.
+    // Model evaluations divide by sigma throughout the allowed interval.
     if bounds[2][0] <= 0.0 {
         return None;
     }
@@ -172,8 +162,7 @@ pub fn fit_gaussian_bounded(
     }
 
     let limits = bounds.map(|bound| [f64::from(bound[0]), f64::from(bound[1])]);
-    // Clamp the start point into the box; rmpfit rejects out-of-bounds starts
-    // with MPError::InitBounds.
+    // rmpfit rejects an initial point outside the bounds.
     let mut params = [
         clamp_f64(f64::from(initial[0]), limits[0]),
         clamp_f64(f64::from(initial[1]), limits[1]),
@@ -193,8 +182,7 @@ pub fn fit_gaussian_bounded(
         xtol: f64::from(config.xtol),
         gtol: f64::from(config.gtol),
         max_iter: config.max_iter,
-        // Errors come from scipy_style_errors below, so rmpfit's own
-        // covariance pass is skipped.
+        // scipy_style_errors computes the covariance including parameters at their bounds.
         no_covar: true,
         ..MPConfig::new()
     };
@@ -211,9 +199,7 @@ pub fn fit_gaussian_bounded(
         .with_borrow_mut(|workspace| problem.mpfit_with_workspace(&mut params, workspace))
         .ok()?;
 
-    // Chi/Par/Both/Dir are normal convergence; Ftol/Xtol/Gtol mean the solver
-    // reached a rounding-limited minimum it cannot improve (still a usable fit).
-    // MaxIter (and NotDone) are non-convergence, reported as FLAG_NO_CONVERGENCE.
+    // Ftol, Xtol and Gtol also yield usable fits at the limit of floating-point precision.
     let converged = matches!(
         status.success,
         MPSuccess::Chi

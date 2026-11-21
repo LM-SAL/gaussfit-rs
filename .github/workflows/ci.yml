@@ -44,8 +44,7 @@ jobs:
       - name: cargo test
         run: cargo test
   tests:
-    # Every supported Python once and every platform once: the C-parity job needs Linux for
-    # the pinned C extension, the newest Python goes on Linux too, the others on macOS and Windows.
+    # The pinned C parity fixtures were recorded on Linux.
     needs: [rust]
     uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@8d5ad7efc8e84a051639373f6ea0d10441eafee1 # v3.2.1
     with:
@@ -58,9 +57,7 @@ jobs:
         - windows: py312
 
   dist_check:
-    # The sdist and wheel must carry metadata PyPI accepts: twine check --strict, the check the
-    # publish action runs before uploading, runs here on every PR; check-wheel-contents catches
-    # layout mistakes; installing from the sdist proves it ships the vendored rmpfit crate.
+    # Building from the sdist also checks that it includes the vendored solver.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -99,9 +96,6 @@ jobs:
         - linux: build_docs
 
   build_dists:
-    # Twelve wheels with LTO, per platform one abi3 wheel (built on 3.12, tested on each later
-    # version) and one each for 3.14t and 3.15t: built for tags, and for a PR labelled
-    # "Run publish" to rehearse a release, not on every push to main or the weekly schedule.
     if: |
       startsWith(github.ref, 'refs/tags/v') ||
       (

@@ -53,14 +53,14 @@ def test_output_shape_and_dtype():
     assert r.dtype == np.float32
 
 
-def test_no_convergence_flag_on_impossible_bounds():
+def test_peak_outside_amplitude_bounds_returns_a_fit_status():
     x, y, err = _make_data()
     r = fit_gaussian(
         x=x,
         y=y,
         error=err,
         initial=np.array([1.5, 0, 1.0], dtype=np.float32),
-        # amplitude must be > 1.8, but true peak is 1.0 — can't converge
+        # The true peak lies below the allowed amplitude range.
         lower_bounds=np.array([1.8, -0.01, 0.99], dtype=np.float32),
         upper_bounds=np.array([2.0, 0.01, 1.01], dtype=np.float32),
     )

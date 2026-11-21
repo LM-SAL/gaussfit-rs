@@ -1,6 +1,3 @@
-# Read the Docs configuration file.
-# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details.
-
 version: 2
 
 build:
@@ -8,10 +5,10 @@ build:
   tools:
     python: "3.14"
   jobs:
-    # rustup, as the newest build.tools.rust is older than the Rust that Cargo.toml requires.
+    # The extension needs a newer Rust toolchain than the build image provides.
     pre_install:
       - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-    # Replaces python.install; each command runs in a new shell, so cargo goes on PATH here.
+    # Each command starts a new shell, so add Cargo to PATH for pip.
     install:
       - PATH="$HOME/.cargo/bin:$PATH" python -m pip install ".[docs]"
 

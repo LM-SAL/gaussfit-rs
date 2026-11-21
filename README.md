@@ -1,10 +1,9 @@
 # gaussfit-rs
 
-Fast, parallel Gaussian fitting for spectroscopic data with a Rust core and a Python API.
+Fit Gaussian emission lines in individual spectra or batches.
 
 ```bash
 pip install gaussfit-rs
 ```
 
-- Documentation: https://gaussfit-rs.readthedocs.io
-- Source and issues: https://github.com/LM-SAL/gaussfit-rs
+[User guide](https://gaussfit-rs.readthedocs.io/en/latest/userguide.html) · [API reference](https://gaussfit-rs.readthedocs.io/en/latest/api.html) · [Source and issues](https://github.com/LM-SAL/gaussfit-rs)

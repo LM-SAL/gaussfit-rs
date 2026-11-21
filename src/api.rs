@@ -8,6 +8,7 @@ use rayon::prelude::*;
 
 use crate::gaussian::{fit_gaussian_bounded, FitConfig};
 use crate::spectrum::fit_single_spectrum_core;
+use crate::workers::{self, WorkerPool};
 use crate::{FLAG_NO_CONVERGENCE, FLAG_SUCCESS, FTOL, GTOL, MAX_ITER_PY, XTOL};
 
 fn validate_fit_config(xtol: f32, ftol: f32, gtol: f32, max_iter: isize) -> PyResult<FitConfig> {
@@ -76,23 +77,13 @@ fn validate_spectrum_options(
     Ok(())
 }
 
-/// Fit Gaussians to N spectra in parallel.
-///
-/// `spectra` and `spec_noise` are `(N, M)`, `dopp_slit` is `(n_slit, M)`, and
-/// row `i` is fitted against `dopp_slit[slit_index[i]]` (row 0 when
-/// `slit_index` is None, which requires a single Doppler row) with guide
-/// velocity `guide_velocities[i]`. Each result row is `[amp, vel, sigma,
-/// amp_err, vel_err, sig_err, reduced_chi2, flag, quality]`, the ninth column
-/// being the quality bits (0 for failed fits); the second array holds the `(i_left,
-/// i_right)` fit window per row and the third the solver counts `[n_iter,
-/// n_fev]` (-1 unless the fit converged). `flag` is `FLAG_SUCCESS`, `FLAG_NO_LOCAL_MAX`
-/// (no positive peak in the search window, including a non-finite guide, or
-/// fewer than 3 valid samples) or `FLAG_NO_CONVERGENCE`; all other fields are
-/// NaN unless the flag is success.
+/// Fit one Gaussian per row, using `slit_index` to select each velocity grid.
+/// Returns fit rows, half-open window indices and solver counts.
+/// On failure the seven fit values are NaN, quality is zero and both counts are -1.
 #[pyfunction]
 #[pyo3(signature = (spectra, dopp_slit, spec_noise, guide_velocities, velocity_range, npix,
     npix_slack, dv, width_min, amplitude_rel_min, amplitude_rel_max, width_max, width_guess,
-    slit_index=None, xtol=XTOL, ftol=FTOL, gtol=GTOL, max_iter=MAX_ITER_PY))]
+    slit_index=None, xtol=XTOL, ftol=FTOL, gtol=GTOL, max_iter=MAX_ITER_PY, pool=None))]
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn fit_spectra_batch<'py>(
     py: Python<'py>,
@@ -114,6 +105,7 @@ pub(crate) fn fit_spectra_batch<'py>(
     ftol: f32,
     gtol: f32,
     max_iter: isize,
+    pool: Option<&WorkerPool>,
 ) -> PyResult<(
     Bound<'py, PyArray2<f32>>,
     Bound<'py, PyArray2<i32>>,
@@ -195,7 +187,7 @@ pub(crate) fn fit_spectra_batch<'py>(
     let mut idx_values = vec![0i32; n_spectra * 2];
     let mut meta_values = vec![-1i32; n_spectra * 2];
 
-    py.detach(|| {
+    let fit_batch = || {
         fit_values
             .par_chunks_mut(stride)
             .zip(idx_values.par_chunks_mut(2))
@@ -227,7 +219,8 @@ pub(crate) fn fit_spectra_batch<'py>(
                 meta_row[0] = result.n_iter;
                 meta_row[1] = result.n_fev;
             })
-    });
+    };
+    py.detach(|| workers::run(pool, fit_batch));
 
     let fit_out = Array2::<f32>::from_shape_vec((n_spectra, stride), fit_values)
         .map_err(|_| PyRuntimeError::new_err("failed to build fit result array"))?;

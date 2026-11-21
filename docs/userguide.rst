@@ -17,20 +17,15 @@ Levenberg-Marquardt Gaussian fit on the surrounding pixel window.
    >>> spectrum = np.exp(-0.5 * (velocity_grid / 30.0) ** 2).astype(np.float32)
    >>> noise = np.full_like(spectrum, 0.05)
 
+   >>> options = dict(
+   ...     velocity_range=200.0, npix=10, npix_slack=2,
+   ...     dv=float(np.median(np.gradient(velocity_grid))), width_min=5.0, width_max=100.0,
+   ...     width_guess=30.0, amplitude_rel_min=0.1, amplitude_rel_max=2.0,
+   ... )
+
    >>> result_arr, (i_left, i_right) = fit_single_spectrum(
-   ...     spectrum=spectrum,
-   ...     dopp_slit=velocity_grid,
-   ...     spec_noise=noise,
-   ...     guide_velocity=0.0,
-   ...     velocity_range=200.0,
-   ...     npix=10,
-   ...     npix_slack=2,
-   ...     dv=float(np.median(np.gradient(velocity_grid))),  # km/s per pixel
-   ...     width_min=5.0,
-   ...     width_max=100.0,
-   ...     width_guess=30.0,
-   ...     amplitude_rel_min=0.1,
-   ...     amplitude_rel_max=2.0,
+   ...     spectrum=spectrum, dopp_slit=velocity_grid, spec_noise=noise,
+   ...     guide_velocity=0.0, **options,
    ... )
 
    >>> r = FitResult.from_array(result_arr)
@@ -41,13 +36,10 @@ Levenberg-Marquardt Gaussian fit on the surrounding pixel window.
 Batch fitting (IFU data)
 ------------------------
 
-:func:`~gaussfit_rs.fit_spectra_batch` is the entry point for IFU data. It takes a 2-D
-``(N, M)`` array and fits every row concurrently with Rayon, releasing the GIL for the whole
-computation. ``spec_noise`` has the same shape as ``spectra``; ``guide_velocities`` is one value
-per row or a scalar for all rows.
-Other threads keep running meanwhile, so leave the input arrays unchanged until the call
-returns: as with NumPy, writing to an array that another thread is reading gives inconsistent
-results.
+:func:`~gaussfit_rs.fit_spectra_batch` fits the rows of a two-dimensional array
+in parallel. Pass a matching noise array and either one guide velocity per row
+or a scalar for the batch. Keep the inputs unchanged until the call returns
+because the fitter reads them with the GIL released.
 
 .. code-block:: python
 
@@ -56,19 +48,8 @@ results.
    >>> spectra_2d = np.tile(spectrum, (4, 1))
    >>> noise_2d = np.tile(noise, (4, 1))
    >>> fits, indices = fit_spectra_batch(
-   ...     spectra=spectra_2d,       # (N, M) float32, C-contiguous
-   ...     dopp_slit=velocity_grid,  # (M,) float32
-   ...     spec_noise=noise_2d,      # (N, M) float32, C-contiguous
-   ...     guide_velocities=0.0,
-   ...     velocity_range=200.0,
-   ...     npix=10,
-   ...     npix_slack=2,
-   ...     dv=float(np.median(np.gradient(velocity_grid))),
-   ...     width_min=5.0,
-   ...     width_max=100.0,
-   ...     width_guess=30.0,
-   ...     amplitude_rel_min=0.1,
-   ...     amplitude_rel_max=2.0,
+   ...     spectra=spectra_2d, dopp_slit=velocity_grid, spec_noise=noise_2d,
+   ...     guide_velocities=0.0, **options,
    ... )
 
    >>> converged = fits[:, 7] == FLAG_SUCCESS
@@ -86,11 +67,6 @@ is then fitted in one call from a reshaped view, with no per-slit copies:
    >>> flux_noise = np.full_like(flux, 0.05)
    >>> slit_axis = 1
    >>> guides = np.zeros(flux.shape[:-1], dtype=np.float32)
-   >>> options = dict(
-   ...     velocity_range=200.0, npix=10, npix_slack=2,
-   ...     dv=float(np.median(np.gradient(velocity_grid))), width_min=5.0, width_max=100.0,
-   ...     width_guess=30.0, amplitude_rel_min=0.1, amplitude_rel_max=2.0,
-   ... )
 
    >>> rows = flux.reshape(-1, n_wave)                     # view
    >>> slit_index = np.indices(flux.shape[:-1])[slit_axis].ravel()
@@ -147,8 +123,7 @@ half-open and ``(0, 0)`` when no peak was found.
 Fit quality indicator
 ---------------------
 
-Column 8 is 0 for failed fits (the flag column reports those) and otherwise a mask of these bits, exported as :data:`~gaussfit_rs.fitting.QUALITY_UNCONSTRAINED`,
-:data:`~gaussfit_rs.fitting.QUALITY_ZERO_ERROR` and :data:`~gaussfit_rs.fitting.QUALITY_PEGGED`:
+For converged fits, column 8 holds the following quality bits.
 
 .. list-table::
    :header-rows: 1
@@ -162,9 +137,7 @@ Column 8 is 0 for failed fits (the flag column reports those) and otherwise a ma
      - a formal error is exactly 0. This can result from the near-singular guard or from an exact
        fit, because formal errors scale with the residuals. It does not prove the fit is unconstrained.
    * - 4
-     - a fitted parameter sits exactly on a bound. Reported, not judged: legitimate saturation
-       sets this bit too (a broad line pinned at ``width_max``), so it is the most common bit and
-       the one not to mask on blindly.
+     - a fitted parameter reached a bound. A broad line can legitimately reach ``width_max``.
 
 Convert the float32 quality column to integers before testing individual bits:
 
@@ -177,28 +150,21 @@ Convert the float32 quality column to integers before testing individual bits:
    >>> unconstrained = (flags & QUALITY_UNCONSTRAINED) != 0
    >>> suspect = (flags & (QUALITY_UNCONSTRAINED | QUALITY_ZERO_ERROR)) != 0
 
-``suspect`` includes zero-error fits for inspection; it is not an automatic rejection rule for
-exact fits. Failed fits must be checked separately because their quality bits are zero.
-``flags != 0`` also includes pegged parameters, which may be legitimate saturation. The amplitude
-interval is deliberately excluded: in the pipeline configuration it is a detection window of
-+/-10 % of the peak, so comparing against its width flags ordinary low-SNR fits. See "Unconstrained-Fit
-Indicator" in the design notes for the measurements and the cases no bit
-catches.
+Failed fits have zero quality bits, so check the status column separately.
+``suspect`` includes exact fits with zero errors. See :ref:`fit-quality-rationale`
+for the choice of thresholds and their limitations.
 
 Solver counts
 -------------
 
-``meta=True`` adds one more return value to every fitting function: an ``int32`` array of
-``[n_iter, n_fev]`` per fit
-(accepted Levenberg-Marquardt iterations and model evaluations, Jacobian calls included), ``-1``
-where the fit did not run or did not converge. It is there for profiling and for comparing
-against other MPFIT builds.
+``meta=True`` also returns two int32 counts per fit, giving the accepted solver iterations
+and model evaluations (including Jacobian calls). Both are ``-1`` for failed fits.
 
 Tolerances
 ----------
 
 Every fitting function takes ``xtol``, ``ftol``, ``gtol`` (default ``1e-6``) and ``max_iter``
-(default 2000), the C reference's settings; they must be finite and positive. The other
+(default 2000). These values must be finite and positive. The other
 options must be finite, with positive ``npix`` and ``dv``, non-negative ``npix_slack`` and
 ``velocity_range``, and increasing amplitude and width bounds.
 
@@ -224,3 +190,34 @@ without the peak search, for use outside the spectral pipeline:
 
 The row holds columns 0-7 of the layout above, with no quality column; *flag* is
 ``FLAG_SUCCESS`` or ``FLAG_NO_CONVERGENCE``.
+
+.. _stage-worker-counts:
+
+Choosing a worker count
+-----------------------
+
+Use :func:`~gaussfit_rs.set_workers` to share a Rayon thread pool across calls.
+Pass a positive ``workers`` count to :func:`~gaussfit_rs.fit_spectra_batch` to override it for one call.
+
+>>> from gaussfit_rs import set_workers
+>>> batch = dict(spectra=spectra_2d, dopp_slit=velocity_grid, spec_noise=noise_2d,
+...              guide_velocities=0.0, **options)
+>>> with set_workers(4):
+...     fits, windows = fit_spectra_batch(**batch)
+...     single_worker_fits, _ = fit_spectra_batch(**batch, workers=1)
+>>> np.testing.assert_array_equal(fits, single_worker_fits)
+
+Leaving the block restores the previous setting. With no count or active context,
+a call uses Rayon's default pool. To size that pool, set ``RAYON_NUM_THREADS``
+before starting Python.
+
+Each package manages its own pool. Budget threads across concurrent calls. If a
+host application accepts worker counts from users, enforce its thread budget
+before passing the count to the library.
+
+For multiprocessing, use ``spawn`` or ``forkserver`` and set the worker count in
+each child. After the parent uses workers, a forked child raises ``RuntimeError``
+when it tries to use them.
+
+The batch fitter distributes spectra across workers. :func:`~gaussfit_rs.fit_single_spectrum`
+accepts the same option and submits one row. Each individual Gaussian fit runs serially.

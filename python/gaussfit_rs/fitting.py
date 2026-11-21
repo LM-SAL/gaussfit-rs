@@ -1,7 +1,7 @@
 """
-Python API for the gaussfit-rs Rust backend.
+Gaussian fits to spectra and weighted samples.
 
-Result row layout, dtype float32:
+Spectral fit results are float32. The low-level Gaussian fit returns the first eight fields.
 
 ======  ===============  =====================================================
 Index   Field            Description
@@ -13,34 +13,13 @@ Index   Field            Description
 4       velocity_err     1-σ uncertainty on velocity [km/s]
 5       sigma_err        1-σ uncertainty on sigma [km/s]
 6       reduced_chi2     Reduced χ² of best fit
-7       flag             Fit status, one of the values below
-8       quality          Quality bit mask, a sum of the bits below; 0 for failed fits
+7       flag             Fit status
+8       quality          Quality bits (zero for failed fits)
 ======  ===============  =====================================================
 
 Fields 0-6 are ``NaN`` when ``flag != FLAG_SUCCESS``.
 
-=====  ===================  ==========================================================
-Flag   Name                 Meaning
-=====  ===================  ==========================================================
-0      FLAG_SUCCESS         The solver converged; the row holds the fit.
-1      FLAG_NO_LOCAL_MAX    No positive peak in the search window (including a
-                            non-finite guide, or fewer than 3 usable samples).
-2      FLAG_NO_CONVERGENCE  The solver stopped without meeting a convergence criterion.
-=====  ===================  ==========================================================
-
-=====  =====================  ========================================================
-Bit    Name                   Meaning
-=====  =====================  ========================================================
-1      QUALITY_UNCONSTRAINED  A parameter's error is not smaller than the interval it
-                              was bounded to (velocity: ``2 * dv * npix``; width:
-                              ``width_max - width_min``); the data do not constrain it.
-2      QUALITY_ZERO_ERROR     A formal error is exactly zero: a near-singular Hessian or
-                              an exact fit.
-4      QUALITY_PEGGED         A fitted parameter sits exactly on a bound. Reported, not
-                              judged: legitimate saturation sets it too.
-=====  =====================  ========================================================
-
-Only converged fits carry quality bits; test them with ``int(row[8]) & QUALITY_...``.
+Test individual quality bits with, for example, ``int(row[8]) & QUALITY_PEGGED``.
 """
 
 from __future__ import annotations
@@ -51,6 +30,7 @@ import numpy as np
 
 from ._gaussfit_rs import fit_gaussian as _fit_gaussian
 from ._gaussfit_rs import fit_spectra_batch as _fit_spectra_batch
+from ._workers import resolve_pool
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
@@ -70,30 +50,21 @@ __all__ = [
 
 _SPECTRA_NDIM = 2
 
-# Fit-status flag values returned in column 7, as float32 like the rest of the row.
 FLAG_SUCCESS: float = 0.0
 """
-The solver converged; the row holds the fit.
+The solver converged.
 """
 
 FLAG_NO_LOCAL_MAX: float = 1.0
 """
-No positive peak in the search window, which covers an empty or all-negative window, a non-finite
-guide, and fewer than 3 usable samples around the peak.
-
-Fields 0-6 are NaN.
+The peak search failed or fewer than three usable samples remained around the peak.
 """
 
 FLAG_NO_CONVERGENCE: float = 2.0
 """
-The solver stopped without meeting a convergence criterion (``max_iter`` or the evaluation cap).
-
-Fields 0-6 are NaN.
+The solver stopped before convergence.
 """
 
-# Quality bits, returned in column 8 as a float. Bits are reported
-# separately instead of folded into one boolean because they answer different questions; a
-# consumer that wants "any of them" tests ``fits[:, 8] != 0``.
 QUALITY_UNCONSTRAINED: int = 1
 """
 A parameter's error is not smaller than the velocity or width interval it was bounded to.
@@ -106,9 +77,9 @@ A formal error is exactly zero, including singular or exact fits.
 
 QUALITY_PEGGED: int = 4
 """
-A fitted parameter sits exactly on a bound.
+A fitted parameter reached a bound.
 
-Reported, not judged; legitimate saturation sets it too.
+A broad line can legitimately reach the upper width bound.
 """
 
 
@@ -167,6 +138,7 @@ def fit_spectra_batch(
     gtol: float = 1.0e-6,
     max_iter: int = 2000,
     meta: bool = False,
+    workers: int | None = None,
 ) -> (
     tuple[NDArray[np.float32], NDArray[np.int32]]
     | tuple[NDArray[np.float32], NDArray[np.int32], NDArray[np.int32]]
@@ -174,9 +146,9 @@ def fit_spectra_batch(
     """
     Fit a Gaussian to every row of ``spectra`` in parallel, releasing the GIL.
 
-    For each row the brightest pixel within ``guide_velocity ± velocity_range`` (km/s) is found,
-    the ``2 * npix + 1`` pixel window around it is normalised by that peak, and a bounded
-    Levenberg-Marquardt Gaussian is fitted to it.
+    The search includes the slack band. If the brightest pixel lies outside
+    ``velocity_range`` of the guide, the row returns :data:`~gaussfit_rs.fitting.FLAG_NO_LOCAL_MAX`.
+    Otherwise the fit uses the surrounding window, normalised by the peak.
 
     Parameters
     ----------
@@ -213,13 +185,16 @@ def fit_spectra_batch(
         ``flux.reshape(-1, M)``.
     xtol, ftol, gtol:
         Convergence tolerances on the parameter step, the cost-function change and the gradient
-        norm (default 1e-6 each).
+        norm.
     max_iter:
-        Maximum Levenberg-Marquardt iterations (default 2000).
+        Maximum number of Levenberg-Marquardt iterations.
     meta:
         When True, a third return value carries the solver's ``[n_iter, n_fev]`` per row
         (accepted Levenberg-Marquardt iterations and model evaluations, Jacobian calls
         included) as int32, ``-1`` where the fit did not run or did not converge.
+    workers:
+        Number of Rayon threads for this call. By default use the active
+        worker context or Rayon's default pool.
 
     Returns
     -------
@@ -261,6 +236,7 @@ def fit_spectra_batch(
         float(ftol),
         float(gtol),
         int(max_iter),
+        resolve_pool(workers),
     )
     return (fits, indices, counts) if meta else (fits, indices)
 
@@ -277,7 +253,7 @@ def fit_single_spectrum(
     | tuple[NDArray[np.float32], tuple[int, int], NDArray[np.int32]]
 ):
     """
-    Fit one spectrum; ``options`` are the keyword arguments of :func:`fit_spectra_batch`.
+    Fit one spectrum using the options of :func:`fit_spectra_batch`.
 
     Returns the 9-element result row and the ``(i_left, i_right)`` fitting window, plus the
     ``[n_iter, n_fev]`` counts with ``meta=True``.
