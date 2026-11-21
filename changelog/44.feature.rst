@@ -1,0 +1,1 @@
+Set the number of fitting threads for one batch with ``workers`` or reuse a thread pool across calls with ``set_workers``.

@@ -211,8 +211,13 @@ Leaving the block restores the previous setting. With no count or active context
 a call uses Rayon's default pool. To size that pool, set ``RAYON_NUM_THREADS``
 before starting Python.
 
-Each package manages its own pool. Budget threads across concurrent calls and
-set the count in each child process.
+Each package manages its own pool. Budget threads across concurrent calls. If a
+host application accepts worker counts from users, enforce its thread budget
+before passing the count to the library.
+
+For multiprocessing, use ``spawn`` or ``forkserver`` and set the worker count in
+each child. After the parent uses workers, a forked child raises ``RuntimeError``
+when it tries to use them.
 
 The batch fitter distributes spectra across workers. :func:`~gaussfit_rs.fit_single_spectrum`
 accepts the same option and submits one row. Each individual Gaussian fit runs serially.

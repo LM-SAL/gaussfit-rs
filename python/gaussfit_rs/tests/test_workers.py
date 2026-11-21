@@ -1,3 +1,4 @@
+import os
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
@@ -76,3 +77,15 @@ def test_invalid_worker_counts(value, error):
         run(np.float32, workers=value)
     with pytest.raises(error), set_workers(value):
         pass
+
+
+def test_forked_child_rejects_parent_workers(monkeypatch):
+    with set_workers(2):
+        child_pid = os.getpid() + 1
+        monkeypatch.setattr(os, "getpid", lambda: child_pid)
+        with pytest.raises(RuntimeError, match="spawn"):
+            run(np.float32)
+        with pytest.raises(RuntimeError, match="spawn"):
+            run(np.float32, workers=1)
+        with pytest.raises(RuntimeError, match="spawn"), set_workers(2):
+            pass

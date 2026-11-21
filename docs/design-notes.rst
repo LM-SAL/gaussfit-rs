@@ -173,4 +173,8 @@ Worker pools
 ``set_workers`` stores a Rayon pool in the current Python context. A call with the
 same worker count reuses it. A different count creates a pool for that call.
 ``test_call_and_scoped_workers_reach_the_kernel`` checks which pool the binding
-receives. ``the_kernel_inherits_the_selected_pool`` checks where the kernel runs.
+receives. ``the_kernel_inherits_the_selected_pool`` checks the Rayon pool used by ``workers::run``.
+
+The worker helpers record the process ID on first use. A forked child inherits
+the pool handles without their worker threads.
+``test_forked_child_rejects_parent_workers`` covers implicit and explicit counts.

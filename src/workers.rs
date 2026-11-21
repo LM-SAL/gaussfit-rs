@@ -5,7 +5,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::num::NonZeroUsize;
 
 #[pyclass(frozen, name = "_WorkerPool", module = "gaussfit_rs._gaussfit_rs")]
-pub(crate) struct WorkerPool(ThreadPool);
+pub(crate) struct WorkerPool(pub(crate) ThreadPool);
 
 #[pymethods]
 impl WorkerPool {
@@ -28,18 +28,5 @@ pub(crate) fn run<T: Send>(pool: Option<&WorkerPool>, work: impl FnOnce() -> T +
     match pool {
         Some(pool) => pool.0.install(work),
         None => work(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_kernel_inherits_the_selected_pool() {
-        let pool = WorkerPool(ThreadPoolBuilder::new().num_threads(2).build().unwrap());
-        assert_eq!(run(Some(&pool), rayon::current_num_threads), 2);
-        pool.0
-            .install(|| assert_eq!(run(None, rayon::current_num_threads), 2));
     }
 }
